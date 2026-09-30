@@ -42,14 +42,12 @@ Calendar	Month grid or list, events and reminders
 System	CPU, memory, network and Wi-Fi
 Shortcuts	Run your Shortcuts app shortcuts
 Themes	Accent and clock colours, font, corner radius, live pill width
-Snake	Silent, fully playable Snake with score, levels, bonus stars and Walls / Wrap modes
 
 The live pill grows beside the notch to show music, timers, downloads and mic / call activity.
 
 Controls
 Hover the notch to expand. Choose Click to Expand in the menu-bar icon if you prefer clicking.
 Right-click the clock to change its colour.
-Snake: arrow keys or WASD to steer, Space or P to pause, R to restart.
 Menu-bar icon: Launch at Login, Click to Expand, Quit.
 Permissions
 
