@@ -1,6 +1,6 @@
 NOTCH
 
-A tiny SwiftUI app that turns your MacBook's notch into a hub for music, files, timers, notes, a mini browser and a silent game of Snake. Hover over the notch and it expands.
+A tiny SwiftUI app that turns your MacBook's notch into a hub for music, files, timers, notes and a mini browser. Hover over the notch and it expands.
 
 Mac only. Requires macOS 13 (Ventura) or newer. Runs on Apple Silicon and Intel.
 
