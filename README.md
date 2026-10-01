@@ -40,7 +40,7 @@ Control Centre notes:
 Brightness controls the built-in display only (the slider greys out if macOS won't allow it).
 Bluetooth opens a list of every device your Mac has paired with (AirPods, headphones, speakers, keyboards, mice, controllers). Tap a device to connect it, tap a connected one to disconnect it; connected devices show a blue tick. Use the arrow at the top to go back. Pair new devices in System Settings first.
 Dark Mode asks for Automation access to System Events the first time.
-Low Power asks for your Mac password once, the first time you use it. That installs a tiny rule (/etc/sudoers.d/notch-lowpower) allowing only the Low Power Mode command without a password. After that it switches instantly with no prompts. To undo it, delete that file.
+Low Power asks for your Mac password once, the first time you use it. That installs a tiny rule (/etc/sudoers.d/notch-lowpower) allowing only the Low Power Mode command without a password. After that it switches instantly with no prompts. If something goes wrong the tile says so, and every step is logged to ~/Library/Application Support/NOTCH/lowpower.log. To undo the setup, delete the rule file.
 Live pill
 
 When the notch is closed, a slim pill grows beside it for: music playing, a running timer or stopwatch, a download in progress (from your Downloads folder), and microphone or call activity (FaceTime, Zoom, Teams, Discord). Adjust its width in Themes > Pill width.
@@ -57,7 +57,7 @@ Change this with the gear icon in the tab. NOTCH checks on launch and every 3 ho
 Publishing a new version
 Change the number in the VERSION file.
 Zip the whole NOTCH folder.
-On GitHub, create a release with a higher tag (for example v3.1.2), write the release notes, attach the zip, and publish.
+On GitHub, create a release with a higher tag (for example v3.1.3), write the release notes, attach the zip, and publish.
 
 Drafts and pre-releases are ignored by the updater.
 
@@ -70,6 +70,7 @@ Safari / YouTube music
 In Safari: Settings > Advanced, tick "Show features for web developers", then Develop > Developer Settings > Allow JavaScript from Apple Events (older macOS: Develop > Allow JavaScript from Apple Events). Approve the Automation prompt for Safari. Play/pause work on any site; next/previous work on YouTube, YouTube Music and Spotify Web.
 
 Recent changes
+3.1.2: more reliable Low Power Mode switching (it now judges success by whether the mode really changed, not by a command's exit code, and reports problems on the tile and in a log).
 3.1.1: Low Power Mode switches without a password after a one-time setup; the Bluetooth tile is now a device picker for connecting and disconnecting your paired devices.
 3.1.0: customisable focus and break timer; new AI tab that runs an AI app you already have installed inside the notch; battery icon now matches your charge and turns green, yellow or red; the Shortcuts tab is replaced by a Control Centre; larger release notes text in the Updater.
 3.0.1: the browser now fits the panel, with adjustable zoom.
