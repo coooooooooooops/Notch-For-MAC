@@ -18,6 +18,8 @@ Works on Apple Silicon and Intel Macs running macOS 13 or newer. Personal-use pr
    bash build.sh
    ```
 
+If a build ever fails, run `bash build.sh 2>&1 | grep error:` in the NOTCH folder to see the first error. (From the Updater, the same log is in `~/Library/Application Support/NOTCH/update.log`.)
+
 `build.sh` builds a universal app, installs it to `/Applications`, launches it, and also writes `NOTCH.dmg` (open it and drag NOTCH onto Applications). The menu-bar icon holds **Launch at Login**, **Click to Expand (instead of hover)**, **Open Hotkey** and **Quit NOTCH**.
 
 ## Tabs
@@ -99,6 +101,7 @@ In Safari: **Settings > Advanced**, tick "Show features for web developers", the
 
 ## Recent changes
 
+- **3.3.3**: fixes the "Build failed" error when installing 3.3.x with the newest Apple build tools. Two things stopped it compiling: the clipboard search box used SwiftUI's `@State`, which newer SDKs turned into an Xcode-only macro, and the drag-and-drop handlers for the AI and Apps pages now need the `override` keyword. Both are fixed, so NOTCH builds with Command Line Tools alone again.
 - **3.3.2**: fixes a build error in 3.3.0 and 3.3.1 (the update could not compile); the Calendar tab now lets you click any day to see its events and use the arrows to move between months; Cmd+V now works inside pop-up boxes such as "Add a website as an app"; the Apps and Browser tabs now open at 60% zoom by default; a failed update now shows the first compiler error in the Updater tab.
 - **3.3.1**: removed the Focus tile from Control Centre (macOS doesn't let an app switch Do Not Disturb without a Shortcut).
 - **3.3.0**: tabs can be hidden and reordered; clipboard pinning and search; drag files or text onto the AI and Apps pages; idle web pages are unloaded to save memory; global hotkey; Control Centre gains Night Shift, Screenshot and keyboard backlight; the notch wobbles when a timer ends; Cmd+V (and copy, cut, select all, undo) now works everywhere.
