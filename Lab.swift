@@ -79,8 +79,16 @@ final class LocalServer {
     /// Calls `done` on the main queue with the port, or nil if no port could be opened.
     /// The first port is fixed on purpose: the web origin stays the same between launches, so your saves persist.
     func start(_ done: @escaping (UInt16?) -> Void) {
-        if port != 0 { done(port); return }
+        if isRunning { done(port); return }
+        // a server that died in the background is dropped here so a fresh one can take its place
+        listener?.cancel(); listener = nil; port = 0
         tryPort(47615, remaining: 12, done)
+    }
+
+    /// True while the loopback server is up and listening.
+    var isRunning: Bool {
+        if port != 0, let l = listener, case .ready = l.state { return true }
+        return false
     }
 
     private func tryPort(_ p: UInt16, remaining: Int, _ done: @escaping (UInt16?) -> Void) {
@@ -97,7 +105,11 @@ final class LocalServer {
                 self?.listener = l; self?.port = p
                 DispatchQueue.main.async { done(p) }
             case .failed:
-                guard !finished else { return }
+                if finished {
+                    l?.cancel()
+                    if let me = self, me.listener === l { me.listener = nil; me.port = 0 }
+                    return
+                }
                 finished = true
                 l?.cancel()
                 self?.tryPort(p + 1, remaining: remaining - 1, done)
@@ -334,8 +346,21 @@ final class LabModel: NSObject, ObservableObject, WKNavigationDelegate, WKScript
         """, completionHandler: nil)
     }
 
+    /// Starts the page again from scratch (and the server if needed) without having to quit the app.
+    func revive() {
+        loadTimer?.cancel()
+        ready = false; error = nil; started = false
+        start()
+    }
+
     func resume() {
         guard started else { return }
+        if ready {
+            if !LocalServer.shared.isRunning { revive(); return }
+            wv.evaluateJavaScript("1") { [weak self] _, err in
+                if err != nil { self?.revive() }
+            }
+        }
         wv.evaluateJavaScript("""
         try{
           (window.__ac||[]).forEach(function(c){c.resume();});
@@ -359,7 +384,10 @@ final class LabModel: NSObject, ObservableObject, WKNavigationDelegate, WKScript
     func webView(_ w: WKWebView, didFail n: WKNavigation!, withError e: Error) { error = e.localizedDescription }
     func webView(_ w: WKWebView, didFailProvisionalNavigation n: WKNavigation!, withError e: Error) { error = e.localizedDescription }
     /// If macOS ever reclaims the web process while the notch is closed, bring the page straight back.
-    func webViewWebContentProcessDidTerminate(_ w: WKWebView) { ready = false; w.reload() }
+    func webViewWebContentProcessDidTerminate(_ w: WKWebView) {
+        ready = false
+        DispatchQueue.main.asyncAfter(deadline: .now() + 1) { [weak self] in self?.revive() }   // short pause so a page that keeps failing can't spin
+    }
 }
 
 /// Permanent container for the page's web view. SwiftUI is handed this same view every time the tab opens,
@@ -373,11 +401,15 @@ final class LabHost: NSView {
         layer?.cornerRadius = 12
         layer?.masksToBounds = true
         web.frame = bounds
-        web.autoresizingMask = [.width, .height]
+        web.autoresizingMask = []
         addSubview(web)
     }
     required init?(coder: NSCoder) { fatalError() }
-    override func layout() { super.layout(); web.frame = bounds }
+    override func layout() {
+        super.layout()
+        // pages divide by their own size, so never hand one a zero-size frame while the panel is collapsing
+        if bounds.width >= 200 && bounds.height >= 120 { web.frame = bounds }
+    }
 }
 
 struct LabSlot: NSViewRepresentable {

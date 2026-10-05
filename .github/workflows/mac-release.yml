@@ -37,7 +37,7 @@ jobs:
         run: |
           notes="--generate-notes"
           [ -f "release-notes/$VER.md" ] && notes="--notes-file release-notes/$VER.md"
-          gh release create "$GITHUB_REF_NAME" NOTCH.zip --title "NOTCH $VER" $notes --latest
+          gh release create "$GITHUB_REF_NAME" NOTCH.zip --title "Notch for Mac $VER" $notes --latest
 
       - name: Guard - Latest must be this Mac release
         env:

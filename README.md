@@ -108,6 +108,7 @@ In Safari: **Settings > Advanced**, tick "Show features for web developers", the
 
 ## Recent changes
 
+- **3.4.3**: maintenance and bug fixes.
 - **3.4.2**: the repo now also holds NOTCH for Windows; the Updater now looks through the repo's releases and only picks Mac ones (tags like v3.4.2), so Windows releases can never be installed on a Mac.
 
 - **3.4.1**: internal tidy-up and housekeeping.

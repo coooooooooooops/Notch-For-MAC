@@ -732,7 +732,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         else { let g = geometry(true); if abs(g.width - panel.frame.width) > 1 || abs(g.height - panel.frame.height) > 1 { panel.setFrame(g, display: true, animate: true) } }
         let slop: CGFloat = (s.expanded && s.tab == labTab) ? 70 : 12   // extra room so the notch doesn't close while that tab has focus
         let near = panel.frame.insetBy(dx: -slop, dy: -slop).contains(NSEvent.mouseLocation)
-        let inside = ((UserDefaults.standard.bool(forKey: "clickMode") && !s.expanded) ? (near && NSEvent.pressedMouseButtons & 1 != 0) : near) || s.forceOpen
+        let holding = s.expanded && s.tab == labTab && s.labOn && NSEvent.pressedMouseButtons != 0   // don't pull the page away mid-drag
+        let inside = ((UserDefaults.standard.bool(forKey: "clickMode") && !s.expanded) ? (near && NSEvent.pressedMouseButtons & 1 != 0) : near) || s.forceOpen || holding
         if inside != s.expanded {
             withAnimation(.easeOut(duration: 0.2)) { s.expanded = inside }
             panel.setFrame(geometry(inside), display: true, animate: true)
