@@ -2,8 +2,9 @@ import SwiftUI
 import AppKit
 import CryptoKit
 
-// Updater tab: asks GitHub for the LATEST release of your repo, shows only that one, and when its tag is
-// newer than the installed app it can download it, verify it, rebuild it with build.sh and relaunch.
+// Updater tab: asks GitHub for the releases of your repo, picks the newest MAC release (tag like v3.4.2), shows only
+// that one, and when its tag is newer than the installed app it can download it, verify it, rebuild it with
+// build.sh and relaunch. The same repo also holds NOTCH for Windows (tags like win-v1.0.1); those are never picked.
 
 let updaterTab = 13   // index of the Updater tab in RootView.icons
 
@@ -21,6 +22,8 @@ struct GHRelease: Decodable {
     var html_url: String?
     var zipball_url: String?
     var assets: [GHAsset]?
+    var draft: Bool?
+    var prerelease: Bool?
 }
 
 func cleanVersion(_ t: String) -> String {
@@ -91,7 +94,7 @@ final class Updater: NSObject, ObservableObject, URLSessionDownloadDelegate {
         guard !checking else { return }
         let r = repo
         guard r.range(of: "^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$", options: .regularExpression) != nil,
-              let url = URL(string: "https://api.github.com/repos/\(r)/releases/latest") else {
+              let url = URL(string: "https://api.github.com/repos/\(r)/releases?per_page=100") else {
             status = "Tap the gear and enter your repo as owner/name"; return
         }
         checking = true
@@ -107,8 +110,11 @@ final class Updater: NSObject, ObservableObject, URLSessionDownloadDelegate {
                 let code = (resp as? HTTPURLResponse)?.statusCode ?? 0
                 if code == 404 { self.release = nil; self.status = "No published release found (repo must be public)"; return }
                 if code == 403 || code == 429 { self.status = "GitHub says slow down - try again in a while"; return }
-                guard code == 200, let data = data, let rel = try? JSONDecoder().decode(GHRelease.self, from: data) else {
+                guard code == 200, let data = data, let all = try? JSONDecoder().decode([GHRelease].self, from: data) else {
                     self.status = "Couldn't read the release (HTTP \(code))"; return
+                }
+                guard let rel = Updater.newestMacRelease(all) else {
+                    self.release = nil; self.status = "No published release found"; return
                 }
                 self.release = rel
                 self.status = self.hasUpdate ? "\(rel.tag_name) is available" : "You're up to date"
@@ -117,9 +123,25 @@ final class Updater: NSObject, ObservableObject, URLSessionDownloadDelegate {
         }.resume()
     }
 
+    /// Mac releases are tagged v1.2.3. Windows releases (win-v1.0.1) live in the same repo and are never picked.
+    /// Drafts and pre-releases are skipped. Returns the highest version.
+    static func newestMacRelease(_ list: [GHRelease]) -> GHRelease? {
+        var best: GHRelease? = nil
+        for r in list {
+            if r.draft == true || r.prerelease == true { continue }
+            if r.tag_name.range(of: "^v?[0-9]+\\.[0-9]+\\.[0-9]+$", options: .regularExpression) == nil { continue }
+            if let b = best {
+                if isNewer(r.tag_name, than: b.tag_name) { best = r }
+            } else {
+                best = r
+            }
+        }
+        return best
+    }
+
     // MARK: pick what to download
     func pick(_ r: GHRelease) -> (url: URL, sha: String?)? {
-        let zips = (r.assets ?? []).filter { $0.name.lowercased().hasSuffix(".zip") }
+        let zips = (r.assets ?? []).filter { $0.name.lowercased().hasSuffix(".zip") && !$0.name.lowercased().contains("windows") }
         let a = zips.first { $0.name.lowercased().contains("notch") } ?? zips.first
         if let a = a, let u = URL(string: a.browser_download_url) {
             var sha: String? = nil

@@ -59,6 +59,7 @@ EOF
 
 sed -i '' "s/__VERSION__/$VERSION/g" "$APP/Contents/Info.plist"
 
+xattr -cr "$APP" || true
 codesign --force --deep --sign - "$APP"
 rm -rf dmg NOTCH.dmg && mkdir dmg && cp -R "$APP" dmg/ && ln -s /Applications dmg/Applications
 hdiutil create -volname NOTCH -srcfolder dmg -ov -format UDZO NOTCH.dmg >/dev/null && rm -rf dmg

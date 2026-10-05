@@ -1,0 +1,18 @@
+{
+  "name": "notch-windows",
+  "productName": "NOTCH",
+  "version": "1.0.1",
+  "description": "NOTCH for Windows - a pop-out shelf at the top of your screen",
+  "main": "main.js",
+  "private": true,
+  "author": "Coops",
+  "license": "UNLICENSED",
+  "scripts": {
+    "start": "electron .",
+    "test": "node tests/run-all.js",
+    "build": "node build/build-windows.js"
+  },
+  "devDependencies": {
+    "electron": "44.5.1"
+  }
+}

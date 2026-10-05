@@ -1,0 +1,11 @@
+.DS_Store
+NOTCH.app/
+.arm
+.x86
+AppIcon.iconset/
+*.log
+windows/dist/
+windows/build/.cache/
+windows/node_modules/
+NOTCH.dmg
+dmg/

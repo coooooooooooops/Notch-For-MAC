@@ -1,5 +1,7 @@
 # NOTCH
 
+This repo holds **both** apps: the Mac app (this folder, tags like `v3.4.2`) and **NOTCH for Windows** (the `windows/` folder, tags like `win-v1.0.1`). They update separately and never touch each other's releases. See `RELEASING.md`.
+
 A menu-bar app that turns the MacBook notch into a pop-out shelf. Hover over the notch (or click it, if you prefer) and it expands into a set of tabs: music, file shelf, clipboard, timers, notes, an AI assistant, browser, camera, calendar, system stats, a Control Centre and more. When something is happening in the background (music, a timer, a download, a call) a slim live pill grows beside the notch.
 
 Works on Apple Silicon and Intel Macs running macOS 13 or newer. Personal-use project.
@@ -94,11 +96,7 @@ Change this with the gear icon in the tab. NOTCH checks on launch and every 3 ho
 
 ## Publishing a new version
 
-1. Change the number in the `VERSION` file.
-2. Zip the whole `NOTCH` folder.
-3. On GitHub, create a release with a higher tag (for example `v3.3.2`), write the release notes, attach the zip, and publish.
-
-Drafts and pre-releases are ignored by the updater.
+See `RELEASING.md`. In short: change the number in `VERSION`, push, then push a tag like `v3.4.3`; GitHub builds and publishes the release by itself. Drafts, pre-releases and Windows (`win-v`) releases are ignored by the Mac updater.
 
 ## Permissions
 
@@ -109,6 +107,8 @@ macOS will ask the first time a feature needs access: Automation (to read and co
 In Safari: **Settings > Advanced**, tick "Show features for web developers", then **Develop > Developer Settings > Allow JavaScript from Apple Events** (older macOS: **Develop > Allow JavaScript from Apple Events**). Approve the Automation prompt for Safari. Play/pause work on any site; next/previous work on YouTube, YouTube Music and Spotify Web.
 
 ## Recent changes
+
+- **3.4.2**: the repo now also holds NOTCH for Windows; the Updater now looks through the repo's releases and only picks Mac ones (tags like v3.4.2), so Windows releases can never be installed on a Mac.
 
 - **3.4.1**: internal tidy-up and housekeeping.
 - **3.4.0**: Notes now supports many named notes with a list view; the clipboard keeps a small history of copied images; new Weather tab with search and saved places; the Themes tab (palette icon) is now **Settings** (cog icon) and also holds the update choice and hotkeys; hotkeys are customisable, gain **Ask AI** and **Clipboard** hotkeys, and are restricted to Control + Option combinations so they can't clash with standard shortcuts.

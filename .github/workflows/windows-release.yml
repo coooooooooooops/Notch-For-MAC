@@ -1,0 +1,52 @@
+name: Release NOTCH for Windows
+
+on:
+  push:
+    tags: ['win-v[0-9]+.[0-9]+.[0-9]+']
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: windows
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+
+      - name: Tag must match package.json and VERSION
+        run: |
+          v="${GITHUB_REF_NAME#win-v}"
+          p="$(node -p "require('./package.json').version")"
+          f="$(tr -d '[:space:]' < VERSION)"
+          [ "$v" = "$p" ] && [ "$v" = "$f" ] || { echo "Tag $v, package.json $p, VERSION $f - they must all match"; exit 1; }
+          echo "VER=$v" >> "$GITHUB_ENV"
+
+      - name: Tests
+        run: node tests/run-all.js
+
+      - name: Build
+        run: node build/build-windows.js
+
+      - name: Publish (never marked Latest)
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          notes="--generate-notes"
+          [ -f "release-notes/$VER.md" ] && notes="--notes-file release-notes/$VER.md"
+          gh release create "$GITHUB_REF_NAME" \
+            "dist/NOTCH-Windows-$VER.zip" "dist/NOTCH-Windows-$VER.zip.sha256" \
+            --title "NOTCH for Windows $VER" $notes --latest=false
+
+      - name: Guard - Latest must still be a Mac release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          latest="$(gh api "repos/$GITHUB_REPOSITORY/releases/latest" --jq .tag_name || true)"
+          echo "Latest is: $latest"
+          case "$latest" in win-*) echo "A Windows release is marked Latest - fix it (see RELEASING.md)"; exit 1;; esac

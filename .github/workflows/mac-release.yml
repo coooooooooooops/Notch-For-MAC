@@ -1,0 +1,48 @@
+name: Release NOTCH for Mac
+
+on:
+  push:
+    tags: ['v[0-9]+.[0-9]+.[0-9]+']
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Tag must match the VERSION file
+        run: |
+          v="${GITHUB_REF_NAME#v}"
+          f="$(tr -d '[:space:]' < VERSION)"
+          [ "$v" = "$f" ] || { echo "Tag is $v but VERSION says $f - they must match"; exit 1; }
+          echo "VER=$v" >> "$GITHUB_ENV"
+
+      - name: Package the Mac app (Mac files only)
+        run: |
+          mkdir -p "$RUNNER_TEMP/stage/NOTCH"
+          rsync -a --exclude='.git' --exclude='.github' --exclude='.gitignore' --exclude='windows' \
+            --exclude='release-notes' --exclude='RELEASING.md' --exclude='NOTCH.zip' ./ "$RUNNER_TEMP/stage/NOTCH/"
+          test -f "$RUNNER_TEMP/stage/NOTCH/build.sh"
+          if find "$RUNNER_TEMP/stage" \( -iname '*.exe' -o -iname 'windows-build.json' \) | grep -q .; then
+            echo "Windows files ended up in the Mac package"; exit 1
+          fi
+          (cd "$RUNNER_TEMP/stage" && zip -q -r -X "$GITHUB_WORKSPACE/NOTCH.zip" NOTCH)
+
+      - name: Publish (marked Latest)
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          notes="--generate-notes"
+          [ -f "release-notes/$VER.md" ] && notes="--notes-file release-notes/$VER.md"
+          gh release create "$GITHUB_REF_NAME" NOTCH.zip --title "NOTCH $VER" $notes --latest
+
+      - name: Guard - Latest must be this Mac release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          latest="$(gh api "repos/$GITHUB_REPOSITORY/releases/latest" --jq .tag_name || true)"
+          echo "Latest is: $latest"
+          [ "$latest" = "$GITHUB_REF_NAME" ] || { echo "Latest is not this release - see RELEASING.md"; exit 1; }
