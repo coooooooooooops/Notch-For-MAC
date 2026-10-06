@@ -300,7 +300,7 @@ struct RootView: View {
                     HStack(spacing: 4) {
                         ForEach(tabOrder, id: \.self) { i in
                             Button { s.tab = i; prefs.editing = false } label: {
-                                Image(systemName: icons[i]).frame(width: 32, height: 24)
+                                Image(systemName: icons[i]).frame(minWidth: 20, maxWidth: 32).frame(height: 24)
                                     .background(s.tab == i ? presetColor(accent).opacity(0.35) : Color.clear).clipShape(Capsule())
                                     .overlay(alignment: .topTrailing) {
                                         if i == updaterTab && upd.badge { Circle().fill(Color.red).frame(width: 7, height: 7).offset(x: -2, y: 1) }
@@ -309,9 +309,11 @@ struct RootView: View {
                         }
                         Spacer()
                         if s.battery >= 0 {
-                            BatteryIcon(level: s.battery, charging: s.charging, lowPower: s.lowPower)
-                            Text("\(s.battery)%").font(.caption)
-                                .foregroundColor(batteryTint(s.battery, s.charging, s.lowPower) == .white ? .white : batteryTint(s.battery, s.charging, s.lowPower))
+                            HStack(spacing: 4) {
+                                BatteryIcon(level: s.battery, charging: s.charging, lowPower: s.lowPower)
+                                Text("\(s.battery)%").font(.caption).lineLimit(1)
+                                    .foregroundColor(batteryTint(s.battery, s.charging, s.lowPower) == .white ? .white : batteryTint(s.battery, s.charging, s.lowPower))
+                            }.fixedSize().layoutPriority(1)
                         }
                     }.frame(maxWidth: 640)
                     .contextMenu { Button("Customise tabs...") { prefs.editing = true } }

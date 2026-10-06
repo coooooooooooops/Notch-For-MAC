@@ -96,7 +96,7 @@ Change this with the gear icon in the tab. NOTCH checks on launch and every 3 ho
 
 ## Publishing a new version
 
-See `RELEASING.md`. In short: change the number in `VERSION`, push, then push a tag like `v3.4.3`; GitHub builds and publishes the release by itself. Drafts, pre-releases and Windows (`win-v`) releases are ignored by the Mac updater.
+See `RELEASING.md`. In short: change the number in `VERSION`, push, then push a tag like `v3.4.4`; GitHub builds and publishes the release by itself. Drafts, pre-releases and Windows (`win-v`) releases are ignored by the Mac updater.
 
 ## Permissions
 
@@ -108,6 +108,7 @@ In Safari: **Settings > Advanced**, tick "Show features for web developers", the
 
 ## Recent changes
 
+- **3.4.4**: fixes the battery percentage wrapping under the icon when the tab bar is full; other bug fixes.
 - **3.4.3**: maintenance and bug fixes.
 - **3.4.2**: the repo now also holds NOTCH for Windows; the Updater now looks through the repo's releases and only picks Mac ones (tags like v3.4.2), so Windows releases can never be installed on a Mac.
 
