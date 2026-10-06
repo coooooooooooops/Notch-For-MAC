@@ -163,7 +163,7 @@
   N.register = function (t) { N.tabs.push(t); N.byId[t.id] = t; };
   N.orderedTabs = function () {
     const saved = N.get('tabsOrder', []);
-    const ids = N.tabs.map(t => t.id);
+    const ids = N.tabs.filter(t => !t.gated || N.get(t.gated, false)).map(t => t.id);
     const order = saved.filter(i => ids.includes(i)).concat(ids.filter(i => !saved.includes(i)));
     return order.map(i => N.byId[i]);
   };

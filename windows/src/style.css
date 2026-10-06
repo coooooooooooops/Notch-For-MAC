@@ -44,12 +44,13 @@ body.idle-hidden #notch:not(.open):not(.live) { background: transparent; box-sha
 #clock { width: 92px; flex: none; line-height: 1.1; color: var(--clock); }
 #clockT { font-size: 15px; font-weight: 700; font-variant-numeric: tabular-nums; }
 #clockD { font-size: 10.5px; opacity: .65; }
-#tabs { flex: 1; display: flex; justify-content: center; gap: 2px; overflow: hidden; }
-.tab-btn { position: relative; width: 31px; height: 28px; border: 0; background: transparent; border-radius: 9px; display: grid; place-items: center; cursor: pointer; color: var(--dim); }
+#tabs { flex: 1 1 0; min-width: 0; display: flex; justify-content: center; gap: 2px; overflow: hidden; }
+.tab-btn { position: relative; flex: 0 1 31px; min-width: 20px; height: 28px; border: 0; background: transparent; border-radius: 9px; display: grid; place-items: center; cursor: pointer; color: var(--dim); }
 .tab-btn:hover { background: var(--faint); color: #fff; }
 .tab-btn.active { background: var(--faint2); color: var(--accent); }
 .tab-btn .dot { position: absolute; top: 3px; right: 5px; width: 7px; height: 7px; border-radius: 50%; background: #ff453a; }
-#batt { width: 92px; flex: none; display: flex; align-items: center; justify-content: flex-end; gap: 6px; font-size: 11px; color: var(--dim); }
+#batt { width: 92px; flex: none; display: flex; align-items: center; justify-content: flex-end; gap: 6px; font-size: 11px; color: var(--dim); white-space: nowrap; }
+#batt > span { flex: none; white-space: nowrap; }
 .bat { width: 24px; height: 12px; border: 1.5px solid rgba(255,255,255,.6); border-radius: 4px; position: relative; padding: 1px; }
 .bat::after { content: ""; position: absolute; right: -4px; top: 3px; width: 2px; height: 4px; border-radius: 0 1px 1px 0; background: rgba(255,255,255,.6); }
 .bat i { display: block; height: 100%; border-radius: 2px; background: #fff; }

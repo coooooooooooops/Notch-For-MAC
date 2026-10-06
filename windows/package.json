@@ -1,7 +1,7 @@
 {
   "name": "notch-windows",
   "productName": "NOTCH",
-  "version": "1.0.1",
+  "version": "1.0.2",
   "description": "NOTCH for Windows - a pop-out shelf at the top of your screen",
   "main": "main.js",
   "private": true,

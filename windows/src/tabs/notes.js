@@ -107,6 +107,7 @@
       nameIn = el('input', { type: 'text', value: note.name, placeholder: 'Note name', class: 'grow', style: { fontWeight: '700' } });
       textIn = el('textarea', { placeholder: 'Write something...', spellcheck: 'false' }); textIn.value = note.text;
       nameIn.addEventListener('input', saveName); textIn.addEventListener('input', saveText);
+      textIn.addEventListener('input', () => { if (N.labRun) N.labRun(textIn.value).then(c => { if (c !== null && textIn) { textIn.value = c; saveText(); } }).catch(() => {}); });
       left.appendChild(el('div', { class: 'row' },
         el('button', { class: 'btn icon', title: 'All notes', onclick: () => { flush(); view = 'list'; draw(); } }, N.icon('list', 14)), nameIn,
         el('button', { class: 'btn icon', title: 'New note', onclick: newNote }, N.icon('plus', 14)),

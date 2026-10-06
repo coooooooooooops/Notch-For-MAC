@@ -9,3 +9,4 @@ windows/build/.cache/
 windows/node_modules/
 NOTCH.dmg
 dmg/
+windows/dist/

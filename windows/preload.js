@@ -41,6 +41,7 @@ contextBridge.exposeInMainWorld('notch', {
   updaterCheck: () => ipcRenderer.invoke('updater-check'),
   updaterInstall: () => ipcRenderer.invoke('updater-install'),
   updaterSetRepo: r => ipcRenderer.invoke('updater-set-repo', r),
+  labStart: () => ipcRenderer.invoke('lab-start'),
   appInfo: () => ipcRenderer.invoke('app-info'),
   quit: () => ipcRenderer.send('quit'),
   on: (ch, fn) => {

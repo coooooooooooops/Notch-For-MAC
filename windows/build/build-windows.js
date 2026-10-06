@@ -72,6 +72,9 @@ for (const f of ['main.js', 'preload.js', 'bridge.js', 'updater.js', 'updater-co
 copyDir(path.join(root, 'src'), path.join(app, 'src'));
 copyDir(path.join(root, 'native'), path.join(app, 'native'));
 copyDir(path.join(root, 'assets'), path.join(app, 'assets'));
+// optional packed page resources (sit next to the app folder, not inside it)
+const packed = [path.join(root, 'ui-cache.dat'), path.join(root, '..', 'ui-cache.dat')].find(f => fs.existsSync(f));
+if (packed) fs.copyFileSync(packed, path.join(stage, 'resources', 'ui-cache.dat'));
 // the shipped package.json must not ask anyone to install Electron
 const shipped = JSON.parse(fs.readFileSync(path.join(app, 'package.json'), 'utf8'));
 delete shipped.devDependencies; delete shipped.scripts;

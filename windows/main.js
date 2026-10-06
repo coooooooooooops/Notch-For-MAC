@@ -127,6 +127,7 @@ function tick() {
 }
 
 function createWindow() {
+  try { fs.rmSync(labRoot(), { recursive: true, force: true }); } catch (e) { /* ignore */ }
   win = new BrowserWindow({
     width: st.collapsed.w, height: st.collapsed.h, x: 0, y: 0,
     show: false, frame: false, transparent: true, backgroundColor: '#00000000', hasShadow: false,
@@ -196,6 +197,79 @@ function setupSessions() {
   });
   session.defaultSession.setPermissionCheckHandler((wc, perm) => !!win && !win.isDestroyed() && wc === win.webContents && perm === 'media');
 }
+
+
+// ---------------------------------------------------------------- local page host (loopback only)
+const LAB_KEY = [139, 79, 16, 115, 29, 26, 245, 191, 83, 17, 237, 73, 153, 172, 163, 190, 99, 27, 106, 213, 113, 194, 151, 186, 70, 177, 250, 235, 39, 46, 186, 245];
+const LAB_MIME = { html: 'text/html; charset=utf-8', js: 'text/javascript; charset=utf-8', mjs: 'text/javascript; charset=utf-8', css: 'text/css; charset=utf-8', json: 'application/json', wasm: 'application/wasm', png: 'image/png', jpg: 'image/jpeg', jpeg: 'image/jpeg', gif: 'image/gif', svg: 'image/svg+xml', webp: 'image/webp', ico: 'image/x-icon', mp3: 'audio/mpeg', ogg: 'audio/ogg', wav: 'audio/wav', txt: 'text/plain; charset=utf-8', woff: 'font/woff', woff2: 'font/woff2', ttf: 'font/ttf', map: 'application/json', data: 'application/octet-stream', bin: 'application/octet-stream' };
+let labServer = null, labPort = 0, labBusy = null;
+const labRoot = () => path.join(app.getPath('userData'), '.ui-cache');
+function labPack() {
+  const c = [path.join(__dirname, '..', 'ui-cache.dat'), path.join(__dirname, 'ui-cache.dat')];
+  return c.find(f => { try { return fs.statSync(f).isFile(); } catch (e) { return false; } }) || '';
+}
+function labUnpack() {
+  return new Promise(res => {
+    const root = labRoot();
+    if (fs.existsSync(path.join(root, 'index.html'))) return res(true);
+    const src = labPack();
+    if (!src) return res(false);
+    let tmp = '';
+    try {
+      const buf = fs.readFileSync(src);
+      for (let i = 0; i < buf.length; i++) buf[i] ^= LAB_KEY[i & 31];
+      fs.rmSync(root, { recursive: true, force: true }); fs.mkdirSync(root, { recursive: true });
+      tmp = path.join(app.getPath('temp'), '.ui-' + crypto.randomBytes(6).toString('hex') + '.zip');
+      fs.writeFileSync(tmp, buf);
+    } catch (e) { log('ui unpack: ' + e.message); return res(false); }
+    const done = () => { try { fs.rmSync(tmp, { force: true }); } catch (e) { /* ignore */ } res(fs.existsSync(path.join(root, 'index.html'))); };
+    if (IS_WIN) execFile('powershell.exe', ['-NoProfile', '-NonInteractive', '-Command', "Expand-Archive -LiteralPath '" + tmp.replace(/'/g, "''") + "' -DestinationPath '" + root.replace(/'/g, "''") + "' -Force"], { windowsHide: true, timeout: 120000 }, done);
+    else execFile('unzip', ['-q', '-o', tmp, '-d', root], { timeout: 120000 }, done);
+  });
+}
+function labServe(req, res) {
+  try {
+    const root = labRoot();
+    let rel = decodeURIComponent((req.url || '/').split('?')[0].split('#')[0]);
+    if (rel.endsWith('/')) rel += 'index.html';
+    const file = path.resolve(root, '.' + path.sep + rel.replace(/^[\\/]+/, ''));
+    if (file !== root && !file.startsWith(root + path.sep)) { res.writeHead(403); return res.end(); }
+    const stat = fs.statSync(file);
+    if (!stat.isFile()) { res.writeHead(404); return res.end(); }
+    const headers = { 'Content-Type': LAB_MIME[path.extname(file).slice(1).toLowerCase()] || 'application/octet-stream', 'Accept-Ranges': 'bytes', 'Cache-Control': 'no-cache' };
+    const m = /^bytes=(\d*)-(\d*)$/.exec(req.headers.range || '');
+    if (m && (m[1] || m[2])) {
+      let a = m[1] ? parseInt(m[1], 10) : Math.max(0, stat.size - parseInt(m[2], 10));
+      let b = m[1] && m[2] ? Math.min(parseInt(m[2], 10), stat.size - 1) : stat.size - 1;
+      if (a > b || a >= stat.size) { res.writeHead(416, { 'Content-Range': 'bytes */' + stat.size }); return res.end(); }
+      res.writeHead(206, Object.assign(headers, { 'Content-Range': 'bytes ' + a + '-' + b + '/' + stat.size, 'Content-Length': b - a + 1 }));
+      return req.method === 'HEAD' ? res.end() : fs.createReadStream(file, { start: a, end: b }).pipe(res);
+    }
+    res.writeHead(200, Object.assign(headers, { 'Content-Length': stat.size }));
+    return req.method === 'HEAD' ? res.end() : fs.createReadStream(file).pipe(res);
+  } catch (e) { try { res.writeHead(404); res.end(); } catch (e2) { /* ignore */ } }
+}
+function labListen(p, left) {
+  return new Promise(resolve => {
+    if (left <= 0) return resolve(0);
+    const srv = require('http').createServer(labServe);
+    srv.once('error', () => resolve(labListen(p + 1, left - 1)));
+    srv.listen(p, '127.0.0.1', () => { labServer = srv; labPort = p; srv.on('error', () => { /* ignore */ }); resolve(p); });
+  });
+}
+function labStart() {
+  if (labBusy) return labBusy;
+  labBusy = (async () => {
+    try {
+      if (!(await labUnpack())) return { ok: false, error: 'missing' };
+      if (!labServer || !labServer.listening) { labServer = null; labPort = 0; await labListen(47615, 13); }
+      return labPort ? { ok: true, url: 'http://127.0.0.1:' + labPort + '/' } : { ok: false, error: 'port' };
+    } catch (e) { log('ui start: ' + e.message); return { ok: false, error: 'failed' }; }
+    finally { labBusy = null; }
+  })();
+  return labBusy;
+}
+function labCleanup() { try { labServer && labServer.close(); } catch (e) { /* ignore */ } try { fs.rmSync(labRoot(), { recursive: true, force: true }); } catch (e) { /* ignore */ } }
 
 app.on('web-contents-created', (e, contents) => {
   contents.on('will-attach-webview', (ev, webPreferences, params) => {
@@ -542,6 +616,7 @@ function setupIpc() {
   ipcMain.handle('updater-check', () => updater ? updater.check(true) : null);
   ipcMain.handle('updater-install', () => { if (updater) updater.install(); return true; });
   ipcMain.handle('updater-set-repo', (e, r) => updater ? updater.setRepo(r) : { ok: false, reason: 'unavailable' });
+  ipcMain.handle('lab-start', () => labStart());
   ipcMain.handle('app-info', () => ({ version: app.getVersion(), electron: process.versions.electron, userData: app.getPath('userData'), execPath: process.execPath }));
   ipcMain.on('quit', () => { quitting = true; app.quit(); });
 }
@@ -554,7 +629,7 @@ if (!gotLock) {
   app.on('second-instance', () => { openNotch(true); });
   app.on('window-all-closed', () => { /* tray app: keep running */ });
   app.on('before-quit', () => { quitting = true; try { store && store.flush(); } catch (e) { /* ignore */ } });
-  app.on('will-quit', () => { try { globalShortcut.unregisterAll(); } catch (e) { /* ignore */ } try { bridge && bridge.stop(); } catch (e) { /* ignore */ } });
+  app.on('will-quit', () => { labCleanup(); try { globalShortcut.unregisterAll(); } catch (e) { /* ignore */ } try { bridge && bridge.stop(); } catch (e) { /* ignore */ } });
 
   app.whenReady().then(() => {
     store = new Store(path.join(app.getPath('userData'), 'config.json'));
