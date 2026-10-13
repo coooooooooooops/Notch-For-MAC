@@ -1,0 +1,38 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob: file:; media-src 'self' blob: data:; connect-src 'self'; font-src 'self' data:">
+<title>NOTCH</title>
+<link rel="stylesheet" href="style.css">
+</head>
+<body class="idle-bar">
+<div id="notch">
+  <div id="pill"><div id="pillL"></div><div id="pillR"></div></div>
+  <div id="panel">
+    <div id="topbar">
+      <div id="clock"><div id="clockT">--:--</div><div id="clockD"></div></div>
+      <div id="tabs"></div>
+      <div id="batt"><span id="battTxt"></span><span id="battIcon"></span></div>
+    </div>
+    <div id="content"></div>
+  </div>
+</div>
+<div id="toast"></div>
+<script src="core.js"></script>
+<script src="tabs/music.js"></script>
+<script src="tabs/shelf.js"></script>
+<script src="tabs/clipboard.js"></script>
+<script src="tabs/timers.js"></script>
+<script src="tabs/notes.js"></script>
+<script src="tabs/web.js"></script>
+<script src="tabs/camera.js"></script>
+<script src="tabs/calendar.js"></script>
+<script src="tabs/system.js"></script>
+<script src="tabs/control.js"></script>
+<script src="tabs/weather.js"></script>
+<script src="tabs/settings.js"></script>
+<script src="tabs/updater.js"></script>
+<script src="boot.js"></script>
+</body>
+</html>
