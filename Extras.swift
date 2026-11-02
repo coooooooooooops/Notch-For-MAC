@@ -618,7 +618,9 @@ struct SettingsView: View {
     @AppStorage("fluid") var fluid = true
     @AppStorage("haptics") var haptics = true
     @AppStorage("hudVolume") var hudVolume = true
-    @AppStorage("hudBrightness") var hudBrightness = true
+    @AppStorage("hudBrightness") var hudBrightness = false
+    @AppStorage("lyrics") var lyrics = true
+    @AppStorage("artColors") var artColors = false
     @AppStorage("hudPower") var hudPower = true
     @AppStorage("hudBluetooth") var hudBluetooth = true
     @AppStorage("updAutoInstall") var autoInstall = false
@@ -694,11 +696,18 @@ struct SettingsView: View {
                 section("Alerts in the pill") {
                     HStack(spacing: 14) {
                         Toggle("Volume", isOn: $hudVolume)
-                        Toggle("Brightness and keyboard light", isOn: $hudBrightness)
+                        Toggle("Brightness (can flicker with auto-brightness)", isOn: $hudBrightness)
                         Toggle("Battery and charging", isOn: $hudPower)
                         Toggle("Bluetooth", isOn: $hudBluetooth)
                     }.toggleStyle(.switch).controlSize(.small).font(.system(size: 11))
                     Text("Pops up beside the notch for a moment. macOS still shows its own volume and brightness bars too.").font(.caption).foregroundColor(.gray)
+                }
+                section("Music") {
+                    HStack(spacing: 14) {
+                        Toggle("Live lyrics", isOn: $lyrics)
+                        Toggle("Colours follow album art", isOn: $artColors)
+                    }.toggleStyle(.switch).controlSize(.small).font(.system(size: 11))
+                    Text("Lyrics come from lrclib.net, which only receives the song name, artist and length.").font(.caption).foregroundColor(.gray)
                 }
                 section("Appearance") {
                     HStack(spacing: 6) {
@@ -792,27 +801,42 @@ final class LiveModel: ObservableObject {
     @Published var dl: DL?
     var lastSize = 0.0, lastName = "", lastT = Date(), timer: Timer?
     func start() { timer = Timer.scheduledTimer(withTimeInterval: 1.5, repeats: true) { [weak self] _ in self?.poll() } }
+    var busy = false
     func poll() {
         mic = micActive()
         let known = ["com.apple.FaceTime": "FaceTime", "us.zoom.xos": "Zoom", "com.microsoft.teams2": "Teams", "com.hnc.Discord": "Discord"]
         callApp = NSWorkspace.shared.runningApplications.compactMap { $0.bundleIdentifier }.compactMap { known[$0] }.first ?? ""
-        let dir = FileManager.default.urls(for: .downloadsDirectory, in: .userDomainMask)[0]
-        let items = (try? FileManager.default.contentsOfDirectory(at: dir, includingPropertiesForKeys: [.contentModificationDateKey])) ?? []
-        let exts = ["crdownload", "download", "part", "opdownload"]
-        let now = Date()
-        let hit = items.first { u in
-            guard exts.contains(u.pathExtension) else { return false }
-            if u.pathExtension == "download" { return true }
-            let m = (try? u.resourceValues(forKeys: [.contentModificationDateKey]).contentModificationDate) ?? .distantPast
-            return now.timeIntervalSince(m) < 8
+        if busy { return }
+        busy = true
+        let prevSize = lastSize, prevName = lastName, prevT = lastT
+        // The Downloads folder scan runs in the background so it never stalls the notch.
+        DispatchQueue.global(qos: .utility).async { [weak self] in
+            let dir = FileManager.default.urls(for: .downloadsDirectory, in: .userDomainMask)[0]
+            let items = (try? FileManager.default.contentsOfDirectory(at: dir, includingPropertiesForKeys: [.contentModificationDateKey])) ?? []
+            let exts = ["crdownload", "download", "part", "opdownload"]
+            let now = Date()
+            let hit = items.first { u in
+                guard exts.contains(u.pathExtension) else { return false }
+                if u.pathExtension == "download" { return true }
+                let m = (try? u.resourceValues(forKeys: [.contentModificationDateKey]).contentModificationDate) ?? .distantPast
+                return now.timeIntervalSince(m) < 8
+            }
+            var result: DL?
+            var size = 0.0, name = ""
+            if let f = hit {
+                let mb = Double(sizeOf(f)) / 1_048_576
+                let dt = max(now.timeIntervalSince(prevT), 0.1)
+                let sp = prevName == f.lastPathComponent ? max(mb - prevSize, 0) / dt : 0
+                size = mb; name = f.lastPathComponent
+                result = DL(name: f.deletingPathExtension().lastPathComponent, mb: mb, speed: sp)
+            }
+            DispatchQueue.main.async {
+                guard let self = self else { return }
+                self.busy = false
+                if result != nil { self.lastSize = size; self.lastName = name; self.lastT = now } else { self.lastName = "" }
+                self.dl = result
+            }
         }
-        if let f = hit {
-            let mb = Double(sizeOf(f)) / 1_048_576
-            let dt = max(now.timeIntervalSince(lastT), 0.1)
-            let sp = lastName == f.lastPathComponent ? max(mb - lastSize, 0) / dt : 0
-            lastSize = mb; lastName = f.lastPathComponent; lastT = now
-            dl = DL(name: f.deletingPathExtension().lastPathComponent, mb: mb, speed: sp)
-        } else { dl = nil; lastName = "" }
     }
 }
 let liveModel = LiveModel()

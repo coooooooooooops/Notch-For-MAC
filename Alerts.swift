@@ -83,13 +83,15 @@ final class AlertCenter {
     private var lastCharging: Bool?
     private var warned = Set<Int>()
     private var btState: [String: Bool]?
+    private var btPending: [String: Bool] = [:]
+    private var lastPlug = Date.distantPast
     private let q = DispatchQueue(label: "notch.alerts")
     private var timer: Timer?
     private var n = 0
 
     func start() {
         let d = UserDefaults.standard
-        d.register(defaults: ["hudVolume": true, "hudBrightness": true, "hudPower": true, "hudBluetooth": true])
+        d.register(defaults: ["hudVolume": true, "hudBrightness": false, "hudPower": true, "hudBluetooth": true])
         timer = Timer.scheduledTimer(withTimeInterval: 0.35, repeats: true) { [weak self] _ in self?.poll() }
     }
 
@@ -112,14 +114,14 @@ final class AlertCenter {
         let d = UserDefaults.standard
         if d.bool(forKey: "hudPower") { checkPower(Store.shared) }
         let wantVol = d.bool(forKey: "hudVolume"), wantBright = d.bool(forKey: "hudBrightness")
-        let wantBT = d.bool(forKey: "hudBluetooth") && n % 9 == 0      // about every 3 seconds
+        let wantBT = d.bool(forKey: "hudBluetooth") && n % 15 == 0      // about every 5 seconds
         guard wantVol || wantBright || wantBT else { return }
         q.async { [weak self] in
             var vol: (level: Double, muted: Bool)?
-            var br: Double?, kb: Double?
+            var br: Double?
             var bt: [BTDev]?
             if wantVol { vol = SysAudio.volume() }
-            if wantBright { br = Bright.get(); kb = CoreBright.keyboard() }
+            if wantBright { br = Bright.get() }
             if wantBT { bt = ControlModel.pairedDevices() }
             DispatchQueue.main.async {
                 guard let self = self else { return }
@@ -129,7 +131,6 @@ final class AlertCenter {
                     if self.moved(v.level, &self.lastVol, 0.01) || muteChanged { self.post(.volume(v.level, v.muted), for: 1.6) }
                 }
                 if let b = br, self.moved(b, &self.lastBright, 0.03) { self.post(.brightness(b), for: 1.6) }
-                if let k = kb, self.moved(k, &self.lastKbd, 0.03) { self.post(.keyboard(k), for: 1.6) }
                 if let devs = bt { self.checkBluetooth(devs) }
             }
         }
@@ -137,7 +138,7 @@ final class AlertCenter {
 
     private func checkPower(_ s: Store) {
         guard s.battery >= 0 else { return }
-        if let was = lastCharging, was != s.charging { post(.plug(s.charging, s.battery), for: 3) }
+        if let was = lastCharging, was != s.charging, Date().timeIntervalSince(lastPlug) > 10 { lastPlug = Date(); post(.plug(s.charging, s.battery), for: 3) }
         lastCharging = s.charging
         if s.charging || s.battery > 20 { warned = warned.filter { $0 == 100 } }
         if !s.charging {
@@ -151,14 +152,24 @@ final class AlertCenter {
         if s.battery < 95 { warned.remove(100) }
     }
 
+    /// A device only counts as connected / disconnected once two checks in a row agree, so flickering links stay quiet.
     private func checkBluetooth(_ devs: [BTDev]) {
-        var now: [String: Bool] = [:]
-        for d in devs { now[d.id] = d.connected }
-        defer { btState = now }
-        guard let old = btState else { return }
-        for d in devs where old[d.id] != nil && old[d.id] != d.connected {
-            post(.bluetooth(d.name, d.icon, d.connected), for: 3)
-            break
+        guard btState != nil else {
+            var first: [String: Bool] = [:]
+            for d in devs { first[d.id] = d.connected }
+            btState = first
+            return
+        }
+        for d in devs {
+            guard let prev = btState?[d.id] else { btState?[d.id] = d.connected; continue }
+            if prev == d.connected { btPending[d.id] = nil; continue }
+            if btPending[d.id] == d.connected {
+                btPending[d.id] = nil
+                btState?[d.id] = d.connected
+                post(.bluetooth(d.name, d.icon, d.connected), for: 3)
+                return
+            }
+            btPending[d.id] = d.connected
         }
     }
 }

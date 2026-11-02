@@ -13,6 +13,13 @@ func mmss(_ s: Int) -> String { String(format: "%02d:%02d", s / 60, s % 60) }
 final class Store: ObservableObject {
     static let shared = Store()
     @Published var expanded = false
+    @Published var wob = false                  // the timer-done wobble is running: the shape follows the window
+    @Published var showContent = false          // the tab contents fade in once the shape has opened
+    @Published var tw: CGFloat = 680            // size the notch is opening to
+    @Published var th: CGFloat = 220
+    @Published var cw: CGFloat = 200            // size of the closed notch (plus the live pill)
+    @Published var ch: CGFloat = 32
+    @Published var artColor: Color? = nil
     @Published var tab = 0
     @Published var files: [URL] = []
     @Published var clips: [String] = []
@@ -21,7 +28,7 @@ final class Store: ObservableObject {
     var onTimerDone: (() -> Void)?    // AppDelegate hooks this to wobble the notch
     @Published var track = "Nothing playing"
     @Published var artist = ""
-    @Published var art: NSImage?
+    @Published var art: NSImage? { didSet { updateArtColor() } }
     @Published var playing = false
     @Published var pos = 0.0          // song position (seconds) at the moment of the last poll / seek
     @Published var dur = 0.0          // song length (seconds), 0 = unknown
@@ -48,7 +55,8 @@ final class Store: ObservableObject {
     init() {
         let d = UserDefaults.standard
         d.register(defaults: ["waterDaily": true, "counterDaily": false, "pillExtra": 92.0,
-                              "glass": true, "glassBody": false, "fluid": true, "haptics": true])
+                              "glass": true, "glassBody": false, "fluid": true, "haptics": true,
+                              "lyrics": true, "artColors": false])
         if d.string(forKey: "lastDay") == nil, let old = d.string(forKey: "waterDay") { d.set(old, forKey: "lastDay") }
         water = d.integer(forKey: "water")
         counter = d.integer(forKey: "counter")
@@ -135,32 +143,75 @@ final class Store: ObservableObject {
 
     func isRunning(_ id: String) -> Bool { NSWorkspace.shared.runningApplications.contains { $0.bundleIdentifier == id } }
 
+    var musicBusy = false
+
+    /// Asks Spotify / Music what is playing. The AppleScript runs in the background so it never freezes the notch.
     func pollMusic() {
+        if musicBusy { return }
         let cands = [("Spotify", "com.spotify.client"), ("Music", "com.apple.Music")].filter { isRunning($0.1) }
-        var hit = false
-        for (app, _) in cands {
-            let script = "tell application \"\(app)\" to if player state is playing then return (name of current track) & \"\\n\" & (artist of current track) & \"\\n\" & (player position as string) & \"\\n\" & (duration of current track as string)"
-            guard let r = osa(script)?.stringValue else { continue }
-            let p = r.components(separatedBy: "\n")
-            hit = true; src = app; playing = true
-            if p.count >= 4 {
-                pos = Store.num(p[2]); posAt = Date()
-                let d = Store.num(p[3]); dur = app == "Spotify" ? d / 1000 : d   // Spotify reports milliseconds
+        if cands.isEmpty { pollSafari(); return }
+        musicBusy = true
+        DispatchQueue.global(qos: .userInitiated).async { [weak self] in
+            var found: (app: String, parts: [String])?
+            for (app, _) in cands {
+                let script = "tell application \"\(app)\" to if player state is playing then return (name of current track) & \"\\n\" & (artist of current track) & \"\\n\" & (player position as string) & \"\\n\" & (duration of current track as string)"
+                if let r = osa(script)?.stringValue { found = (app, r.components(separatedBy: "\n")); break }
             }
-            let title = p.first ?? ""
-            if title != track {
-                track = title; artist = p.count > 1 ? p[1] : ""; art = nil
-                if app == "Spotify", let u = osa("tell application \"Spotify\" to return artwork url of current track")?.stringValue, let url = URL(string: u) {
-                    DispatchQueue.global().async {
-                        if let d = try? Data(contentsOf: url), let img = NSImage(data: d) { DispatchQueue.main.async { self.art = img } }
+            DispatchQueue.main.async {
+                guard let self = self else { return }
+                self.musicBusy = false
+                guard let f = found else { self.pollSafari(); return }
+                let p = f.parts, app = f.app
+                self.src = app; self.playing = true
+                if p.count >= 4 {
+                    self.pos = Store.num(p[2]); self.posAt = Date()
+                    let d = Store.num(p[3]); self.dur = app == "Spotify" ? d / 1000 : d   // Spotify reports milliseconds
+                }
+                let title = p.first ?? ""
+                if title != self.track {
+                    self.track = title; self.artist = p.count > 1 ? p[1] : ""; self.art = nil
+                    LyricsStore.shared.load(track: self.track, artist: self.artist, duration: self.dur)
+                    DispatchQueue.global(qos: .utility).async {
+                        var img: NSImage?
+                        if app == "Spotify", let u = osa("tell application \"Spotify\" to return artwork url of current track")?.stringValue, let url = URL(string: u) {
+                            if let d = try? Data(contentsOf: url) { img = NSImage(data: d) }
+                        } else if app == "Music", let d = osa("tell application \"Music\" to return data of artwork 1 of current track")?.data {
+                            img = NSImage(data: d)
+                        }
+                        if let img = img { DispatchQueue.main.async { if self.track == title { self.art = img } } }
                     }
-                } else if app == "Music", let d = osa("tell application \"Music\" to return data of artwork 1 of current track")?.data {
-                    art = NSImage(data: d)
                 }
             }
-            break
         }
-        if !hit { pollSafari() }
+    }
+
+    /// Picks a vivid colour from the cover so the notch can match the song.
+    func updateArtColor() {
+        guard let a = art, let tiff = a.tiffRepresentation else { artColor = nil; return }
+        DispatchQueue.global(qos: .utility).async {
+            guard let cg = NSBitmapImageRep(data: tiff)?.cgImage else { return }
+            let buf = UnsafeMutablePointer<UInt8>.allocate(capacity: 256)
+            buf.initialize(repeating: 0, count: 256)
+            defer { buf.deallocate() }
+            guard let ctx = CGContext(data: buf, width: 8, height: 8, bitsPerComponent: 8, bytesPerRow: 32,
+                                      space: CGColorSpaceCreateDeviceRGB(),
+                                      bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue) else { return }
+            ctx.interpolationQuality = .medium
+            ctx.draw(cg, in: CGRect(x: 0, y: 0, width: 8, height: 8))
+            var r = 0.0, g = 0.0, b = 0.0, wsum = 0.0
+            for i in 0..<64 {
+                let rr = Double(buf[i * 4]) / 255, gg = Double(buf[i * 4 + 1]) / 255, bb = Double(buf[i * 4 + 2]) / 255
+                let mx = max(rr, gg, bb), mn = min(rr, gg, bb)
+                let sat = mx == 0 ? 0 : (mx - mn) / mx
+                let w = sat * sat + 0.05
+                r += rr * w; g += gg * w; b += bb * w; wsum += w
+            }
+            guard wsum > 0, let ns = NSColor(red: r / wsum, green: g / wsum, blue: b / wsum, alpha: 1).usingColorSpace(.deviceRGB) else { return }
+            var h: CGFloat = 0, sa: CGFloat = 0, v: CGFloat = 0, al: CGFloat = 0
+            ns.getHue(&h, saturation: &sa, brightness: &v, alpha: &al)
+            let c = Color(hue: Double(h), saturation: Double(max(sa, 0.45)), brightness: Double(max(v, 0.85)))
+            DispatchQueue.main.async { self.artColor = c }
+        }
     }
 
     /// Parses "12.5" or "12,5" (some locales print a comma).
@@ -271,6 +322,7 @@ struct RootView: View {
     @AppStorage("outline") var outline = "white"
     @AppStorage("outlineWidth") var outlineWidth = 1.5
     @AppStorage("glassBody") var glassBody = false
+    @AppStorage("artColors") var artColors = false
     @StateObject var tabFrames = TabFrames()
     @ObservedObject var live = liveModel
     @ObservedObject var pillModel = LivePillModel.shared
@@ -287,20 +339,35 @@ struct RootView: View {
     /// If the current tab was hidden, jump to the first one that is still shown.
     func fixTab() { if !tabOrder.contains(s.tab), let f = tabOrder.first { s.tab = f } }
 
-    var body: some View {
+    /// Colour used for the selected tab and the outline; follows the album cover when that is switched on.
+    var tintColor: Color { (artColors && s.playing) ? (s.artColor ?? presetColor(accent)) : presetColor(accent) }
+    var outlineColor: Color { (artColors && s.playing && s.artColor != nil) ? tintColor : presetColor(outline) }
+
+    var body: some View { GeometryReader { g in layered(g.size) } }
+
+    /// The window is a fixed size; only the black shape inside it grows and shrinks (a cheap animation).
+    @ViewBuilder func layered(_ win: CGSize) -> some View {
+        let aw: CGFloat = s.wob ? win.width : (s.expanded ? min(s.tw, win.width) : min(s.cw, win.width))
+        let ah: CGFloat = s.wob ? win.height : (s.expanded ? min(s.th, win.height) : min(s.ch, win.height))
+        let sp: Animation? = s.wob ? nil : .spring(response: 0.38, dampingFraction: 0.86)
         ZStack(alignment: .top) {
-            if glassBody && s.expanded {
-                NotchShape(r: CGFloat(corner)).fill(Color.black.opacity(0.55))
-                    .glassSurface(NotchShape(r: CGFloat(corner)))
-            } else {
-                NotchShape(r: s.expanded ? CGFloat(corner) : 10).fill(Color.black)
+            ZStack(alignment: .top) {
+                if glassBody && s.expanded {
+                    NotchShape(r: CGFloat(corner)).fill(Color.black.opacity(0.55))
+                        .glassSurface(NotchShape(r: CGFloat(corner)))
+                } else {
+                    NotchShape(r: s.expanded ? CGFloat(corner) : 10).fill(Color.black)
+                }
+                if outline != "none" {
+                    NotchOutline(r: s.expanded ? CGFloat(corner) : 10, inset: CGFloat(outlineWidth) / 2)
+                        .stroke(outlineColor, style: StrokeStyle(lineWidth: CGFloat(outlineWidth), lineCap: .round, lineJoin: .round))
+                        .allowsHitTesting(false)
+                }
+                if !s.expanded && pillModel.show { pill }
             }
-            if outline != "none" {
-                NotchOutline(r: s.expanded ? CGFloat(corner) : 10, inset: CGFloat(outlineWidth) / 2)
-                    .stroke(presetColor(outline), style: StrokeStyle(lineWidth: CGFloat(outlineWidth), lineCap: .round, lineJoin: .round))
-                    .allowsHitTesting(false)
-            }
-            if !s.expanded && pillModel.show { pill }
+            .frame(width: aw, height: ah)
+            .animation(sp, value: aw)
+            .animation(sp, value: ah)
             if s.expanded {
                 VStack(spacing: 8) {
                     HStack(spacing: 4) {
@@ -352,9 +419,10 @@ struct RootView: View {
                         }
                     }.frame(maxWidth: .infinity, maxHeight: .infinity)
                 }.padding(.top, 38).padding(.horizontal, 20).padding(.bottom, 12)
-                .transition(.opacity.combined(with: .scale(scale: 0.96, anchor: .top)))
+                .opacity(s.showContent ? 1 : 0).allowsHitTesting(s.showContent)
             }
-        }.foregroundColor(.white).preferredColorScheme(.dark).tint(presetColor(accent)).fontDesign(fontDesignValue(fd))
+        }.frame(width: win.width, height: win.height, alignment: .top)
+        .foregroundColor(.white).preferredColorScheme(.dark).tint(presetColor(accent)).fontDesign(fontDesignValue(fd))
         .onAppear { fixTab() }
         .onChange(of: prefs.hidden) { _ in fixTab() }
     }
@@ -363,7 +431,7 @@ struct RootView: View {
     @ViewBuilder var tabHighlight: some View {
         if let r = tabFrames.f[s.tab] {
             Color.clear.frame(width: r.width, height: r.height)
-                .modifier(GlassIf(shape: Capsule(), tint: presetColor(accent).opacity(0.6), interactive: false, classic: presetColor(accent).opacity(0.35)))
+                .modifier(GlassIf(shape: Capsule(), tint: tintColor.opacity(0.6), interactive: false, classic: tintColor.opacity(0.35)))
                 .offset(x: r.minX, y: r.minY)
                 .animation(.spring(response: 0.38, dampingFraction: 0.78), value: s.tab)
         }
@@ -378,6 +446,7 @@ struct RootView: View {
             VStack(alignment: .leading, spacing: 6) {
                 Text(s.track).font(.headline).lineLimit(1)
                 Text(s.artist).font(.subheadline).foregroundColor(.gray).lineLimit(1)
+                LyricsLine()
                 HStack(spacing: 14) {
                     btn("backward.fill") { s.ctl("previous track") }
                     btn(s.playing ? "pause.fill" : "play.fill") { s.ctl("playpause") }
@@ -609,40 +678,21 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     let s = Store.shared
     var wobbling = false
     var tickN = 0
-    var springTimer: Timer?
-    var springTarget = NSRect.zero
-    var vw: CGFloat = 0, vh: CGFloat = 0
+    var shrinkSince: Date?
 
-    /// Moves the panel to a new size with a spring, so opening, closing and tab resizes feel fluid.
-    func glide(to g: NSRect) {
-        guard UserDefaults.standard.bool(forKey: "fluid") else {
-            springTimer?.invalidate(); springTimer = nil
-            panel.setFrame(g, display: true, animate: true)
-            return
+    /// The window only ever jumps (never animates, which was the lag). It grows straight away so the shape has room
+    /// to open, and shrinks a moment after the shape has finished closing. The visible animation is all in SwiftUI.
+    func syncFrame(_ target: NSRect) {
+        let f = panel.frame
+        let w = max(f.width, target.width), h = max(f.height, target.height)
+        if abs(w - f.width) > 1 || abs(h - f.height) > 1 || abs(f.midX - target.midX) > 1 || abs(f.maxY - target.maxY) > 1 {
+            panel.setFrame(NSRect(x: target.midX - w / 2, y: target.maxY - h, width: w, height: h), display: true)
         }
-        springTarget = g
-        if springTimer != nil { return }      // already running: it simply chases the new target
-        vw = 0; vh = 0
-        let t = Timer(timeInterval: 1.0 / 90.0, repeats: true) { [weak self] tm in self?.springStep(tm) }
-        RunLoop.main.add(t, forMode: .common)
-        springTimer = t
-    }
-
-    func springStep(_ tm: Timer) {
-        if wobbling { tm.invalidate(); springTimer = nil; return }
-        let dt: CGFloat = 1.0 / 90.0
-        let k: CGFloat = 420
-        let c: CGFloat = 2 * 0.80 * k.squareRoot()      // a touch under critical damping = a small, soft overshoot
-        let f = panel.frame, t = springTarget
-        vw += (k * (t.width - f.width) - c * vw) * dt
-        vh += (k * (t.height - f.height) - c * vh) * dt
-        let w = max(40, f.width + vw * dt), h = max(20, f.height + vh * dt)
-        if abs(t.width - w) < 0.3, abs(t.height - h) < 0.3, abs(vw) < 3, abs(vh) < 3 {
-            tm.invalidate(); springTimer = nil
-            panel.setFrame(t, display: true)
-            return
-        }
-        panel.setFrame(NSRect(x: t.midX - w / 2, y: t.maxY - h, width: w, height: h), display: true)
+        if abs(w - target.width) > 1 || abs(h - target.height) > 1 {
+            if let t = shrinkSince {
+                if Date().timeIntervalSince(t) > 0.38 { panel.setFrame(target, display: true); shrinkSince = nil }
+            } else { shrinkSince = Date() }
+        } else { shrinkSince = nil }
     }
 
     func geometry(_ expanded: Bool) -> NSRect {
@@ -736,6 +786,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     func wobble() {
         guard !wobbling else { return }
         wobbling = true
+        s.wob = true
         let base = geometry(s.expanded)
         let big: CGFloat = s.expanded ? 0.45 : 1
         let start = Date()
@@ -744,7 +795,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
             guard let self = self else { tm.invalidate(); return }
             let e = Date().timeIntervalSince(start)
             if e >= dur {
-                tm.invalidate(); self.wobbling = false
+                tm.invalidate(); self.wobbling = false; self.s.wob = false
                 self.panel.setFrame(self.geometry(self.s.expanded), display: true)
                 return
             }
@@ -797,17 +848,29 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         tickN += 1
         if tickN % 25 == 0, !panel.isVisible { panel.orderFrontRegardless() }
         if wobbling { return }
-        if !s.expanded { let g = geometry(false); if abs(g.width - panel.frame.width) > 1 { glide(to: g) } }
-        else { let g = geometry(true); if abs(g.width - panel.frame.width) > 1 || abs(g.height - panel.frame.height) > 1 { glide(to: g) } }
-        let near = panel.frame.insetBy(dx: -12, dy: -12).contains(NSEvent.mouseLocation)
+        let ge = geometry(true), gc = geometry(false)
+        if s.tw != ge.width { s.tw = ge.width }
+        if s.th != ge.height { s.th = ge.height }
+        if s.cw != gc.width { s.cw = gc.width }
+        if s.ch != gc.height { s.ch = gc.height }
+        let target = s.expanded ? ge : gc
+        syncFrame(target)
+        // Judge the mouse against where the notch is going, not the window mid-animation, so it can never fight itself.
+        let near = target.insetBy(dx: -12, dy: -12).contains(NSEvent.mouseLocation)
         let inside = ((UserDefaults.standard.bool(forKey: "clickMode") && !s.expanded) ? (near && NSEvent.pressedMouseButtons & 1 != 0) : near) || s.forceOpen
         if inside != s.expanded {
-            withAnimation(UserDefaults.standard.bool(forKey: "fluid") ? .spring(response: 0.42, dampingFraction: 0.82) : .easeOut(duration: 0.2)) { s.expanded = inside }
-            glide(to: geometry(inside))
+            let fluid = UserDefaults.standard.bool(forKey: "fluid")
+            withAnimation(fluid ? .spring(response: 0.38, dampingFraction: 0.86) : .easeOut(duration: 0.2)) { s.expanded = inside }
+            syncFrame(inside ? ge : gc)
             if inside {
                 tapHaptic()
                 panel.makeKey()
+                DispatchQueue.main.asyncAfter(deadline: .now() + 0.12) { [weak self] in
+                    guard let self = self, self.s.expanded else { return }
+                    withAnimation(.easeOut(duration: 0.18)) { self.s.showContent = true }
+                }
             } else {
+                withAnimation(.easeIn(duration: 0.1)) { s.showContent = false }
                 browserModel.reset()        // search browser starts fresh next time
             }
         }
