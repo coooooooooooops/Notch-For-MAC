@@ -108,6 +108,7 @@ In Safari: **Settings > Advanced**, tick "Show features for web developers", the
 
 ## Recent changes
 
+- **3.9.0**: shelf tools (zip, unzip, convert, share, text from images and screen, remove background).
 - **3.8.0**: big smoothness and lag fix, live synced lyrics, colours that follow album art.
 - **3.7.0**: Liquid Glass UI, fluid spring motion, themes, notch outline, alerts in the pill (volume, brightness, battery, Bluetooth), two live activities at once.
 - **3.5.1**: new notch outline (choose the colour and thickness, or turn it off, in Settings > Appearance).

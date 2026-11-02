@@ -13,6 +13,7 @@ func mmss(_ s: Int) -> String { String(format: "%02d:%02d", s / 60, s % 60) }
 final class Store: ObservableObject {
     static let shared = Store()
     @Published var expanded = false
+    @Published var toast = ""                   // a short message bubble (Done, Copied 40 characters, ...)
     @Published var wob = false                  // the timer-done wobble is running: the shape follows the window
     @Published var showContent = false          // the tab contents fade in once the shape has opened
     @Published var tw: CGFloat = 680            // size the notch is opening to
@@ -139,6 +140,14 @@ final class Store: ObservableObject {
             }
         }
         return (-1, false)
+    }
+
+    /// Shows a short message in the notch for a moment.
+    func say(_ text: String, hold: Double = 2.5) {
+        toast = text
+        DispatchQueue.main.asyncAfter(deadline: .now() + hold) { [weak self] in
+            if self?.toast == text { self?.toast = "" }
+        }
     }
 
     func isRunning(_ id: String) -> Bool { NSWorkspace.shared.runningApplications.contains { $0.bundleIdentifier == id } }
@@ -419,6 +428,8 @@ struct RootView: View {
                         }
                     }.frame(maxWidth: .infinity, maxHeight: .infinity)
                 }.padding(.top, 38).padding(.horizontal, 20).padding(.bottom, 12)
+                .overlay(alignment: .bottom) { toastView }
+                .animation(.easeInOut(duration: 0.2), value: s.toast)
                 .opacity(s.showContent ? 1 : 0).allowsHitTesting(s.showContent)
             }
         }.frame(width: win.width, height: win.height, alignment: .top)
@@ -478,7 +489,7 @@ struct RootView: View {
                                     Text(u.lastPathComponent).font(.caption2).lineLimit(1)
                                 }.frame(width: 70)
                                 .onDrag { NSItemProvider(contentsOf: u) ?? NSItemProvider() }
-                                .contextMenu { Button("Remove") { s.files.removeAll { $0 == u } } }
+                                .contextMenu { shelfMenu(u) }
                             }
                         }.padding(8)
                     }
@@ -486,6 +497,7 @@ struct RootView: View {
             }.onDrop(of: [UTType.fileURL], isTargeted: nil) { ps in
                 loadURLs(ps) { us in for u in us where !s.files.contains(u) { s.files.append(u) } }; return true
             }
+            shelfTools
             airdropTile
         }
     }

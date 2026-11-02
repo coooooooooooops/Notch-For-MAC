@@ -115,6 +115,11 @@ struct ClipImageStrip: View {
                         .onDrag { NSItemProvider(contentsOf: it.url) ?? NSItemProvider() }
                         .contextMenu {
                             Button("Copy") { imgs.copy(it) }
+                            Button("Copy text from image") { FileTools.copyText(from: it.url) }
+                            if #available(macOS 14.0, *) {
+                                Button("Remove background") { FileTools.work("Removing background...") { FileTools.removeBackground(it.url).map { [$0] } } }
+                            }
+                            Button("Add to shelf") { if !Store.shared.files.contains(it.url) { Store.shared.files.append(it.url) } }
                             Button("Delete") { imgs.remove(it) }
                         }
                     }
