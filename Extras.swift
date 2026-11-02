@@ -611,6 +611,16 @@ struct SettingsView: View {
     @AppStorage("fontDesign") var fd = "default"
     @AppStorage("corner") var corner = 24.0
     @AppStorage("pillExtra") var pillExtra = 92.0
+    @AppStorage("outline") var outline = "white"
+    @AppStorage("outlineWidth") var outlineWidth = 1.5
+    @AppStorage("glass") var glass = true
+    @AppStorage("glassBody") var glassBody = false
+    @AppStorage("fluid") var fluid = true
+    @AppStorage("haptics") var haptics = true
+    @AppStorage("hudVolume") var hudVolume = true
+    @AppStorage("hudBrightness") var hudBrightness = true
+    @AppStorage("hudPower") var hudPower = true
+    @AppStorage("hudBluetooth") var hudBluetooth = true
     @AppStorage("updAutoInstall") var autoInstall = false
     @ObservedObject var hk = Hotkeys.shared
     @ObservedObject var rec = HotkeyRecorder.shared
@@ -626,13 +636,28 @@ struct SettingsView: View {
         }
     }
 
+    /// Swatches for the notch outline: a "no outline" option first, then the usual colours.
+    var outlineSwatches: some View {
+        HStack(spacing: 8) {
+            Circle().fill(Color.black).frame(width: 20, height: 20)
+                .overlay(Image(systemName: "slash.circle").font(.system(size: 12)).foregroundColor(.gray))
+                .overlay(Circle().stroke(Color.white, lineWidth: outline == "none" ? 2.5 : 0))
+                .onTapGesture { outline = "none" }.help("No outline")
+            ForEach(colorNames, id: \.self) { n in
+                Circle().fill(presetColor(n)).frame(width: 20, height: 20)
+                    .overlay(Circle().stroke(Color.white, lineWidth: outline == n ? 2.5 : 0))
+                    .onTapGesture { outline = n }
+            }
+        }
+    }
+
     func section<Content: View>(_ title: String, @ViewBuilder _ content: () -> Content) -> some View {
         VStack(alignment: .leading, spacing: 7) {
             Text(title).font(.system(size: 11, weight: .bold)).foregroundColor(.gray)
             content()
         }
         .padding(10).frame(maxWidth: .infinity, alignment: .leading)
-        .background(Color.white.opacity(0.06)).clipShape(RoundedRectangle(cornerRadius: 10))
+        .panelCard(12)
     }
 
     func pill(_ t: String, _ f: @escaping () -> Void) -> some View {
@@ -666,14 +691,38 @@ struct SettingsView: View {
     var body: some View {
         ScrollView {
             VStack(alignment: .leading, spacing: 8) {
+                section("Alerts in the pill") {
+                    HStack(spacing: 14) {
+                        Toggle("Volume", isOn: $hudVolume)
+                        Toggle("Brightness and keyboard light", isOn: $hudBrightness)
+                        Toggle("Battery and charging", isOn: $hudPower)
+                        Toggle("Bluetooth", isOn: $hudBluetooth)
+                    }.toggleStyle(.switch).controlSize(.small).font(.system(size: 11))
+                    Text("Pops up beside the notch for a moment. macOS still shows its own volume and brightness bars too.").font(.caption).foregroundColor(.gray)
+                }
                 section("Appearance") {
+                    HStack(spacing: 6) {
+                        Text("Theme").frame(width: 70, alignment: .leading)
+                        ForEach(NotchTheme.all, id: \.name) { t in pill(t.name) { t.apply() } }
+                    }
                     HStack { Text("Accent").frame(width: 70, alignment: .leading); swatches($accent) }
                     HStack { Text("Clock").frame(width: 70, alignment: .leading); swatches($dateColor) }
+                    HStack { Text("Outline").frame(width: 70, alignment: .leading); outlineSwatches }
+                    if outline != "none" {
+                        HStack { Text("Thickness").frame(width: 70, alignment: .leading); Slider(value: $outlineWidth, in: 1...4).frame(width: 320); Text(String(format: "%.1f", outlineWidth)).font(.caption).foregroundColor(.gray) }
+                    }
                     HStack {
                         Text("Font").frame(width: 70, alignment: .leading)
                         Picker("", selection: $fd) { ForEach(["default", "rounded", "serif", "monospaced"], id: \.self) { Text($0.capitalized).tag($0) } }
                             .pickerStyle(.segmented).frame(width: 320)
                     }
+                    HStack(spacing: 14) {
+                        Text("Style").frame(width: 70, alignment: .leading)
+                        Toggle("Liquid Glass", isOn: $glass)
+                        Toggle("Glass body", isOn: $glassBody)
+                        Toggle("Fluid motion", isOn: $fluid)
+                        Toggle("Haptics", isOn: $haptics)
+                    }.toggleStyle(.switch).controlSize(.small).font(.system(size: 11))
                     HStack { Text("Corners").frame(width: 70, alignment: .leading); Slider(value: $corner, in: 6...40).frame(width: 320) }
                     HStack { Text("Pill width").frame(width: 70, alignment: .leading); Slider(value: $pillExtra, in: 40...170).frame(width: 320); Text("\(Int(pillExtra))").font(.caption).foregroundColor(.gray) }
                 }
@@ -768,34 +817,117 @@ final class LiveModel: ObservableObject {
 }
 let liveModel = LiveModel()
 extension Store {
-    var hasLive: Bool { playing || running || swRunning || liveModel.mic || liveModel.dl != nil }
+    /// True while the pill should be showing. It is held for a few seconds after the last activity stops,
+    /// so a missed poll or a desktop swipe never makes it blink out.
+    var hasLive: Bool { LivePillModel.shared.show }
 }
+
+enum LeftEar: Equatable { case none, mic, dl, music, timer, sf(String, String) }
+enum RightEar: Equatable { case none, bars, mono(String), text(String), level(Double, String) }
+
+final class LivePillModel: ObservableObject {
+    static let shared = LivePillModel()
+    @Published var show = false
+    @Published var left: LeftEar = .none
+    @Published var left2: LeftEar = .none          // a second activity running at the same time
+    @Published var right: RightEar = .none
+    var until = Date.distantPast
+
+    func refresh(_ s: Store, _ live: LiveModel) {
+        // Every activity that is running, in priority order. The first two show side by side on the left.
+        var acts: [LeftEar] = []
+        if live.mic { acts.append(.mic) }
+        if live.dl != nil { acts.append(.dl) }
+        if s.playing { acts.append(.music) }
+        if s.running || s.swRunning { acts.append(.timer) }
+        var l = acts.first ?? .none
+        var l2 = acts.count > 1 ? acts[1] : LeftEar.none
+        var r = RightEar.none
+        if s.running { r = .mono(mmss(s.remaining)) }
+        else if s.swRunning { r = .mono(mmss(s.sw)) }
+        else if let d = live.dl { r = .text(String(format: "%.1f MB/s", d.speed)) }
+        else if live.mic { r = .text(live.callApp.isEmpty ? "Mic" : live.callApp) }
+        else if s.playing { r = .bars }
+        // A volume / brightness / battery / Bluetooth alert takes over the pill for a moment.
+        let hud = AlertCenter.shared.current()
+        if let h = hud { (l, r) = h.ears; l2 = .none }
+        let active = l != .none || r != .none
+        if active {
+            until = Date().addingTimeInterval(hud == nil ? 4 : 0.4)
+            if l != left { left = l }
+            if l2 != left2 { left2 = l2 }
+            if r != right { right = r }
+        }
+        let shown = active || Date() < until
+        if shown != show { withAnimation(.easeInOut(duration: 0.25)) { show = shown } }
+    }
+}
+
 extension RootView {
     var pill: some View {
         let e = CGFloat(pillExtra) / 2          // width of the strip on each side of the notch
         return HStack(spacing: 0) {
-            ear(true).frame(width: max(e - 4, 12))
+            HStack(spacing: 2) {
+                ear(pillModel.left).scaleEffect(pillModel.left2 == .none ? 1 : 0.85)
+                if pillModel.left2 != .none { ear(pillModel.left2).scaleEffect(0.85) }
+            }.frame(width: max(e - 8, 14), alignment: .leading)
             Spacer(minLength: 0)
-            ear(false).frame(width: max(e - 4, 12))
-        }.padding(.horizontal, 2)
+            rightEar.lineLimit(1).minimumScaleFactor(0.6).frame(width: max(e - 8, 14))
+        }
+        .frame(maxHeight: .infinity)
+        .padding(.horizontal, 4)
+        .animation(.easeInOut(duration: 0.25), value: pillModel.left)
+        .animation(.easeInOut(duration: 0.25), value: pillModel.left2)
+        .transition(.opacity)
     }
-    @ViewBuilder func ear(_ left: Bool) -> some View {
-        earContent(left).lineLimit(1).minimumScaleFactor(0.55)
+
+    @ViewBuilder func ear(_ e: LeftEar) -> some View {
+        switch e {
+        case .sf(let name, let c):
+            Image(systemName: name).font(.system(size: 14, weight: .semibold)).foregroundColor(presetColor(c))
+        case .mic:
+            Image(systemName: "mic.fill").font(.system(size: 12, weight: .semibold)).foregroundColor(.orange)
+        case .dl:
+            Image(systemName: "arrow.down.circle.fill").font(.system(size: 14)).foregroundColor(presetColor(accent))
+        case .music:
+            if let a = s.art {
+                Image(nsImage: a).resizable().aspectRatio(contentMode: .fill).frame(width: 20, height: 20).clipShape(RoundedRectangle(cornerRadius: 5))
+            } else {
+                Image(systemName: "music.note").font(.system(size: 12, weight: .semibold)).foregroundColor(presetColor(accent))
+            }
+        case .timer:
+            if s.running {
+                let total = Double(max(1, (s.onBreak ? s.breakMins : s.focusMins) * 60))
+                let frac = min(1, max(0, Double(s.remaining) / total))
+                ZStack {
+                    Circle().stroke(Color.white.opacity(0.18), lineWidth: 2.5)
+                    Circle().trim(from: 0, to: CGFloat(frac)).stroke(presetColor(accent), style: StrokeStyle(lineWidth: 2.5, lineCap: .round)).rotationEffect(.degrees(-90))
+                }.frame(width: 16, height: 16)
+            } else {
+                Image(systemName: "stopwatch").font(.system(size: 13)).foregroundColor(presetColor(accent))
+            }
+        case .none:
+            EmptyView()
+        }
     }
-    @ViewBuilder func earContent(_ left: Bool) -> some View {
-        let mono = Font.system(size: 12, weight: .medium, design: .monospaced)
-        if left {
-            if live.mic { Image(systemName: "mic.fill").foregroundColor(.orange) }
-            else if live.dl != nil { Image(systemName: "arrow.down.circle.fill").foregroundColor(presetColor(accent)) }
-            else if s.playing, let a = s.art { Image(nsImage: a).resizable().frame(width: 22, height: 22).clipShape(RoundedRectangle(cornerRadius: 5)) }
-            else if s.playing { Bars(on: true).scaleEffect(0.6) }
-            else { Image(systemName: "timer").foregroundColor(presetColor(accent)) }
-        } else {
-            if s.running { Text(mmss(s.remaining)).font(mono) }
-            else if s.swRunning { Text(mmss(s.sw)).font(mono) }
-            else if let d = live.dl { Text(String(format: "%.1fMB/s", d.speed)).font(.system(size: 9, weight: .medium, design: .monospaced)) }
-            else if live.mic { Text(live.callApp.isEmpty ? "Mic" : live.callApp).font(.system(size: 10)) }
-            else if s.playing { Bars(on: true).scaleEffect(0.6) }
+
+    @ViewBuilder var rightEar: some View {
+        switch pillModel.right {
+        case .bars:
+            Bars(on: true).scaleEffect(0.6)
+        case .mono(let t):
+            Text(t).font(.system(size: 12, weight: .medium)).monospacedDigit()
+        case .text(let t):
+            Text(t).font(.system(size: 10, weight: .medium)).foregroundColor(Color.white.opacity(0.85))
+        case .level(let v, let c):
+            GeometryReader { g in
+                ZStack(alignment: .leading) {
+                    Capsule().fill(Color.white.opacity(0.22))
+                    Capsule().fill(presetColor(c)).frame(width: max(5, g.size.width * CGFloat(min(1, max(0, v)))))
+                }
+            }.frame(height: 5).animation(.spring(response: 0.25, dampingFraction: 0.8), value: v)
+        case .none:
+            EmptyView()
         }
     }
 }

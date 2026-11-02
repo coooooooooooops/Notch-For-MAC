@@ -1,5 +1,5 @@
 'use strict';
-// Notes: any number of named notes + two customisable counter cards (Water, Counter).
+// Notes: any number of named notes + two customisable counter cards (Water, Counter) + a Days card (named countdowns).
 (function () {
   const N = window.N, el = N.el;
   let root = null, view = 'edit', editing = null;   // editing = counter id being customised
@@ -78,6 +78,79 @@
         el('label', { class: 'row small' }, el('span', { class: 'dim', text: 'Progress ring' }), mkSwitch(() => showRing, v => { showRing = v; }))));
   }
 
+
+  // ---- days countdowns: name them, add as many as you like, set how many days are left
+  const startOfDay = d => { const x = new Date(d); x.setHours(0, 0, 0, 0); return x; };
+  const inDays = n => { const x = startOfDay(Date.now()); x.setDate(x.getDate() + n); return x.getTime(); };
+  const daysLeft = t => Math.round((startOfDay(t).getTime() - startOfDay(Date.now()).getTime()) / 86400000);
+  function dayList() {
+    let l = N.get('days', null);
+    if (!Array.isArray(l) || !l.length) { l = [{ id: uid(), name: 'Countdown', target: inDays(7), color: 'pink' }]; N.set('days', l); }
+    return l;
+  }
+  const dayIndex = () => Math.min(Math.max(0, Math.round(Number(N.get('dayIdx', 0))) || 0), dayList().length - 1);
+  const dayCaption = n => n === 0 ? 'is the day' : n > 0 ? (n === 1 ? 'day to go' : 'days to go') : (n === -1 ? 'day ago' : 'days ago');
+
+  function daysCard() {
+    const l = dayList(), i = dayIndex(), d = l[i], n = daysLeft(d.target), col = N.colors[d.color] || '#fff';
+    const go = k => { N.set('dayIdx', (i + k + l.length) % l.length); draw(); };
+    const bump = k => { d.target = inDays(daysLeft(d.target) + k); N.set('days', l); draw(); };
+    const box = el('div', { class: 'ccard' });
+    box.appendChild(el('div', { class: 'row', style: { gap: '4px' } },
+      l.length > 1 ? el('button', { class: 'pillbtn', title: 'Previous', onclick: () => go(-1) }, '‹') : null,
+      el('div', { class: 'small', style: { color: col, fontWeight: '700', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', minWidth: '0' }, text: d.name }),
+      l.length > 1 ? el('button', { class: 'pillbtn', title: 'Next', onclick: () => go(1) }, '›') : null,
+      el('div', { class: 'grow' }),
+      el('button', { class: 'pillbtn', title: 'Customise', onclick: () => { editing = 'days'; draw(); } }, N.icon('sliders', 12))));
+    box.appendChild(el('div', { style: { textAlign: 'center', margin: 'auto 0' } },
+      el('div', { class: 'cval', style: { fontSize: n === 0 ? '26px' : '38px', fontWeight: '300', color: n < 0 ? 'var(--dim)' : col }, text: n === 0 ? 'Today' : String(Math.abs(n)) }),
+      el('div', { class: 'dim tiny', text: dayCaption(n) })));
+    if (l.length > 1) {
+      box.appendChild(el('div', { class: 'row', style: { justifyContent: 'center', gap: '4px', marginBottom: '4px' } },
+        l.slice(0, 8).map((x, k) => el('span', { style: { width: '4px', height: '4px', borderRadius: '50%', background: k === i ? '#fff' : 'rgba(255,255,255,.25)' } }))));
+    }
+    box.appendChild(el('div', { class: 'row', style: { justifyContent: 'center', gap: '10px' } },
+      el('button', { class: 'pillbtn', title: 'One day less', onclick: () => bump(-1) }, '−'),
+      el('button', { class: 'pillbtn', title: 'One day more', onclick: () => bump(1) }, '+')));
+    return box;
+  }
+
+  function daysPanel() {
+    const l = dayList(), i = dayIndex(), d = l[i];
+    const f = (label, input) => el('label', { class: 'row small', style: { gap: '6px' } }, el('span', { class: 'dim', style: { width: '64px' }, text: label }), input);
+    const name = el('input', { type: 'text', value: d.name, maxlength: '24', style: { width: '160px' } });
+    const days = el('input', { type: 'number', value: daysLeft(d.target), min: '-36500', max: '36500', style: { width: '90px' } });
+    let color = d.color;
+    const sw = el('div', { class: 'swatches' });
+    const drawSw = () => { N.clear(sw); Object.keys(N.colors).filter(k => k !== 'white').forEach(k => sw.appendChild(el('div', { class: 'sw' + (k === color ? ' sel' : ''), style: { background: N.colors[k] }, onclick: () => { color = k; drawSw(); } }))); };
+    drawSw();
+    const apply = () => {
+      const v = Math.round(Number(days.value));
+      d.name = (name.value.trim() || d.name).slice(0, 24);
+      d.target = inDays(Number.isFinite(v) ? Math.min(36500, Math.max(-36500, v)) : daysLeft(d.target));
+      d.color = color;
+      N.set('days', l);
+    };
+    return el('div', { class: 'card', style: { display: 'flex', flexDirection: 'column', gap: '6px', height: '100%', overflow: 'auto' } },
+      el('div', { class: 'row' }, el('div', { class: 'h', text: 'Customise countdown ' + (i + 1) + ' of ' + l.length }), el('div', { class: 'grow' }),
+        el('button', { class: 'btn primary', onclick: () => { apply(); editing = null; draw(); } }, 'Done'),
+        el('button', { class: 'btn', onclick: () => { editing = null; draw(); } }, 'Cancel')),
+      el('div', { class: 'row', style: { flexWrap: 'wrap', gap: '8px 18px' } }, f('Name', name), f('Days', days), el('span', { class: 'dim tiny', text: 'from today' })),
+      el('div', { class: 'row', style: { gap: '18px', flexWrap: 'wrap' } }, f('Colour', sw)),
+      el('div', { class: 'row', style: { gap: '8px' } },
+        el('button', { class: 'btn', onclick: () => {
+          apply();
+          const used = Object.keys(N.colors).filter(k => k !== 'white');
+          l.push({ id: uid(), name: 'Countdown ' + (l.length + 1), target: inDays(7), color: used[(l.length) % used.length] });
+          N.set('days', l); N.set('dayIdx', l.length - 1); draw();
+        } }, N.icon('plus', 14), 'Add another'),
+        el('button', { class: 'btn', onclick: () => {
+          l.splice(i, 1);
+          if (!l.length) l.push({ id: uid(), name: 'Countdown', target: inDays(7), color: 'pink' });
+          N.set('days', l); N.set('dayIdx', Math.min(i, l.length - 1)); editing = null; draw();
+        } }, N.icon('trash', 14), 'Delete this one')));
+  }
+
   // ---- notes UI
   const saveText = N.debounce(() => { const n = notes(), cur = N.get('noteCur'); const x = n.find(i => i.id === cur); if (x && textIn) { x.text = textIn.value; x.ts = Date.now(); saveNotes(n); } }, 350);
   const saveName = N.debounce(() => { const n = notes(), cur = N.get('noteCur'); const x = n.find(i => i.id === cur); if (x && nameIn) { x.name = nameIn.value.slice(0, 60) || 'Note'; saveNotes(n); } }, 350);
@@ -90,6 +163,7 @@
   function draw() {
     N.clear(root);
     const cs = counters();
+    if (editing === 'days') { root.appendChild(daysPanel()); return; }
     if (editing) { root.appendChild(customisePanel(cs.find(c => c.id === editing) || cs[0])); return; }
     const { n, cur } = ensure();
     const note = n.find(x => x.id === cur);
@@ -113,7 +187,7 @@
         el('button', { class: 'btn icon', title: 'Delete note', onclick: delNote }, N.icon('trash', 14))));
       left.appendChild(textIn);
     }
-    root.appendChild(el('div', { class: 'notes-wrap' }, left, el('div', { class: 'counter' }, cs.map(counterCard))));
+    root.appendChild(el('div', { class: 'notes-wrap' }, left, el('div', { class: 'counter' }, cs.map(counterCard)), el('div', { class: 'counter' }, daysCard())));
   }
   function newNote() { flush(); const n = notes(); const x = { id: uid(), name: 'Note ' + (n.length + 1), text: '', ts: Date.now() }; n.push(x); saveNotes(n); N.set('noteCur', x.id); view = 'edit'; draw(); setTimeout(() => { try { textIn.focus(); } catch (e) { /* ignore */ } }, 30); }
   function delNote() {
@@ -124,7 +198,7 @@
   }
 
   N.register({
-    id: 'notes', name: 'Notes', icon: 'notes', size: [700, 262],
+    id: 'notes', name: 'Notes', icon: 'notes', size: [840, 262],
     mount(r) { root = el('div', { style: { height: '100%' } }); r.appendChild(root); draw(); },
     show() { editing = null; draw(); },
     hide() { flush(); }

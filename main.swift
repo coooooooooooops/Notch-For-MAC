@@ -47,7 +47,8 @@ final class Store: ObservableObject {
 
     init() {
         let d = UserDefaults.standard
-        d.register(defaults: ["waterDaily": true, "counterDaily": false, "pillExtra": 92.0])
+        d.register(defaults: ["waterDaily": true, "counterDaily": false, "pillExtra": 92.0,
+                              "glass": true, "glassBody": false, "fluid": true, "haptics": true])
         if d.string(forKey: "lastDay") == nil, let old = d.string(forKey: "waterDay") { d.set(old, forKey: "lastDay") }
         water = d.integer(forKey: "water")
         counter = d.integer(forKey: "counter")
@@ -220,6 +221,29 @@ struct NotchShape: Shape {
     }
 }
 
+/// Open outline of the notch (left side, bottom, right side) so no line runs along the top screen edge.
+/// Inset by half the line width so the stroke is never clipped by the window.
+struct NotchOutline: Shape {
+    var r: CGFloat
+    var inset: CGFloat
+    var animatableData: AnimatablePair<CGFloat, CGFloat> {
+        get { AnimatablePair(r, inset) }
+        set { r = newValue.first; inset = newValue.second }
+    }
+    func path(in rect: CGRect) -> Path {
+        let l = rect.minX + inset, rt = rect.maxX - inset, b = rect.maxY - inset
+        let rr = max(0, r - inset)
+        var p = Path()
+        p.move(to: CGPoint(x: l, y: 0))
+        p.addLine(to: CGPoint(x: l, y: b - rr))
+        p.addQuadCurve(to: CGPoint(x: l + rr, y: b), control: CGPoint(x: l, y: b))
+        p.addLine(to: CGPoint(x: rt - rr, y: b))
+        p.addQuadCurve(to: CGPoint(x: rt, y: b - rr), control: CGPoint(x: rt, y: b))
+        p.addLine(to: CGPoint(x: rt, y: 0))
+        return p
+    }
+}
+
 struct Bars: View {
     @AppStorage("accent") var accent = "green"
     var on: Bool
@@ -244,7 +268,12 @@ struct RootView: View {
     @AppStorage("fontDesign") var fd = "default"
     @AppStorage("corner") var corner = 24.0
     @AppStorage("pillExtra") var pillExtra = 92.0
+    @AppStorage("outline") var outline = "white"
+    @AppStorage("outlineWidth") var outlineWidth = 1.5
+    @AppStorage("glassBody") var glassBody = false
+    @StateObject var tabFrames = TabFrames()
     @ObservedObject var live = liveModel
+    @ObservedObject var pillModel = LivePillModel.shared
     @ObservedObject var upd = Updater.shared
     @ObservedObject var prefs = TabPrefs.shared
     @StateObject var clipUI = ClipUI()
@@ -260,15 +289,28 @@ struct RootView: View {
 
     var body: some View {
         ZStack(alignment: .top) {
-            NotchShape(r: s.expanded ? CGFloat(corner) : 10).fill(Color.black)
-            if !s.expanded && s.hasLive { pill }
+            if glassBody && s.expanded {
+                NotchShape(r: CGFloat(corner)).fill(Color.black.opacity(0.55))
+                    .glassSurface(NotchShape(r: CGFloat(corner)))
+            } else {
+                NotchShape(r: s.expanded ? CGFloat(corner) : 10).fill(Color.black)
+            }
+            if outline != "none" {
+                NotchOutline(r: s.expanded ? CGFloat(corner) : 10, inset: CGFloat(outlineWidth) / 2)
+                    .stroke(presetColor(outline), style: StrokeStyle(lineWidth: CGFloat(outlineWidth), lineCap: .round, lineJoin: .round))
+                    .allowsHitTesting(false)
+            }
+            if !s.expanded && pillModel.show { pill }
             if s.expanded {
                 VStack(spacing: 8) {
                     HStack(spacing: 4) {
                         ForEach(tabOrder, id: \.self) { i in
-                            Button { s.tab = i; prefs.editing = false } label: {
+                            Button { if s.tab != i { tapHaptic() }; s.tab = i; prefs.editing = false } label: {
                                 Image(systemName: icons[i]).frame(minWidth: 20, maxWidth: 32).frame(height: 24)
-                                    .background(s.tab == i ? presetColor(accent).opacity(0.35) : Color.clear).clipShape(Capsule())
+                                    .background(GeometryReader { g in
+                                        Color.clear.preference(key: TabFrameKey.self, value: [i: g.frame(in: .named("tabbar"))])
+                                    })
+                                    .contentShape(Capsule())
                                     .overlay(alignment: .topTrailing) {
                                         if i == updaterTab && upd.badge { Circle().fill(Color.red).frame(width: 7, height: 7).offset(x: -2, y: 1) }
                                     }
@@ -282,7 +324,11 @@ struct RootView: View {
                                     .foregroundColor(batteryTint(s.battery, s.charging, s.lowPower) == .white ? .white : batteryTint(s.battery, s.charging, s.lowPower))
                             }.fixedSize().layoutPriority(1)
                         }
-                    }.frame(maxWidth: 640)
+                    }
+                    .coordinateSpace(name: "tabbar")
+                    .background(alignment: .topLeading) { tabHighlight }
+                    .onPreferenceChange(TabFrameKey.self) { v in DispatchQueue.main.async { if tabFrames.f != v { tabFrames.f = v } } }
+                    .frame(maxWidth: 640)
                     .contextMenu { Button("Customise tabs...") { prefs.editing = true } }
                     Group {
                         if prefs.editing { TabsEditor() } else {
@@ -306,10 +352,21 @@ struct RootView: View {
                         }
                     }.frame(maxWidth: .infinity, maxHeight: .infinity)
                 }.padding(.top, 38).padding(.horizontal, 20).padding(.bottom, 12)
+                .transition(.opacity.combined(with: .scale(scale: 0.96, anchor: .top)))
             }
         }.foregroundColor(.white).preferredColorScheme(.dark).tint(presetColor(accent)).fontDesign(fontDesignValue(fd))
         .onAppear { fixTab() }
         .onChange(of: prefs.hidden) { _ in fixTab() }
+    }
+
+    /// The coloured capsule behind the selected tab. One view that glides from tab to tab.
+    @ViewBuilder var tabHighlight: some View {
+        if let r = tabFrames.f[s.tab] {
+            Color.clear.frame(width: r.width, height: r.height)
+                .modifier(GlassIf(shape: Capsule(), tint: presetColor(accent).opacity(0.6), interactive: false, classic: presetColor(accent).opacity(0.35)))
+                .offset(x: r.minX, y: r.minY)
+                .animation(.spring(response: 0.38, dampingFraction: 0.78), value: s.tab)
+        }
     }
 
     var music: some View {
@@ -471,6 +528,7 @@ struct RootView: View {
             NotesPane().frame(maxWidth: .infinity)
             CounterCard(id: "water", label: "Water", unit: "glasses", step: 1, goal: 8, color: "cyan", daily: true, negative: false, value: $s.water)
             CounterCard(id: "counter", label: "Counter", unit: "", step: 1, goal: 0, color: "orange", daily: false, negative: true, value: $s.counter)
+            DaysCard()
         }
     }
 }
@@ -550,6 +608,42 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     var item: NSStatusItem!
     let s = Store.shared
     var wobbling = false
+    var tickN = 0
+    var springTimer: Timer?
+    var springTarget = NSRect.zero
+    var vw: CGFloat = 0, vh: CGFloat = 0
+
+    /// Moves the panel to a new size with a spring, so opening, closing and tab resizes feel fluid.
+    func glide(to g: NSRect) {
+        guard UserDefaults.standard.bool(forKey: "fluid") else {
+            springTimer?.invalidate(); springTimer = nil
+            panel.setFrame(g, display: true, animate: true)
+            return
+        }
+        springTarget = g
+        if springTimer != nil { return }      // already running: it simply chases the new target
+        vw = 0; vh = 0
+        let t = Timer(timeInterval: 1.0 / 90.0, repeats: true) { [weak self] tm in self?.springStep(tm) }
+        RunLoop.main.add(t, forMode: .common)
+        springTimer = t
+    }
+
+    func springStep(_ tm: Timer) {
+        if wobbling { tm.invalidate(); springTimer = nil; return }
+        let dt: CGFloat = 1.0 / 90.0
+        let k: CGFloat = 420
+        let c: CGFloat = 2 * 0.80 * k.squareRoot()      // a touch under critical damping = a small, soft overshoot
+        let f = panel.frame, t = springTarget
+        vw += (k * (t.width - f.width) - c * vw) * dt
+        vh += (k * (t.height - f.height) - c * vh) * dt
+        let w = max(40, f.width + vw * dt), h = max(20, f.height + vh * dt)
+        if abs(t.width - w) < 0.3, abs(t.height - h) < 0.3, abs(vw) < 3, abs(vh) < 3 {
+            tm.invalidate(); springTimer = nil
+            panel.setFrame(t, display: true)
+            return
+        }
+        panel.setFrame(NSRect(x: t.midX - w / 2, y: t.maxY - h, width: w, height: h), display: true)
+    }
 
     func geometry(_ expanded: Bool) -> NSRect {
         let scr = NSScreen.screens.first { $0.safeAreaInsets.top > 0 } ?? NSScreen.main ?? NSScreen.screens[0]
@@ -562,7 +656,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         switch s.tab {
         case 3: eh = 230            // timers (focus / break length pills)
         case 5: if AppsModel.shared.openKey != nil { ew = 820; eh = 460 }   // an app running inside the notch
-        case 4: eh = 250            // notes + water + counter (customise panel needs room)
+        case 4: ew = 820; eh = 250   // notes + water + counter + days (customise panel needs room)
         case 6, 7, aiTab: ew = 820; eh = 460   // browser, camera and AI share one big size
         case 10: eh = 340           // control centre
         case 2: eh = ClipImages.shared.items.isEmpty ? 250 : 296   // clipboard (search + pinned, plus the image strip)
@@ -586,7 +680,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         panel.collectionBehavior = [.canJoinAllSpaces, .fullScreenAuxiliary, .stationary]
         panel.contentView = NSHostingView(rootView: RootView().environmentObject(s))
         panel.orderFrontRegardless()
-        s.start(); liveModel.start(); Updater.shared.start()
+        s.start(); liveModel.start(); AlertCenter.shared.start(); Updater.shared.start()
+        // keep the notch (and its live pill) in place when you swipe between desktops, wake the Mac or change displays
+        let wsc = NSWorkspace.shared.notificationCenter
+        wsc.addObserver(forName: NSWorkspace.activeSpaceDidChangeNotification, object: nil, queue: .main) { [weak self] _ in self?.reassert() }
+        wsc.addObserver(forName: NSWorkspace.didWakeNotification, object: nil, queue: .main) { [weak self] _ in self?.reassert() }
+        NotificationCenter.default.addObserver(forName: NSApplication.didChangeScreenParametersNotification, object: nil, queue: .main) { [weak self] _ in self?.reassert() }
         Timer.scheduledTimer(withTimeInterval: 0.08, repeats: true) { [weak self] _ in self?.check() }
         Timer.scheduledTimer(withTimeInterval: 60, repeats: true) { _ in IdleSweeper.run() }
         s.onTimerDone = { [weak self] in self?.wobble() }
@@ -694,20 +793,34 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     }
 
     func check() {
+        LivePillModel.shared.refresh(s, liveModel)
+        tickN += 1
+        if tickN % 25 == 0, !panel.isVisible { panel.orderFrontRegardless() }
         if wobbling { return }
-        if !s.expanded { let g = geometry(false); if abs(g.width - panel.frame.width) > 1 { panel.setFrame(g, display: true, animate: true) } }
-        else { let g = geometry(true); if abs(g.width - panel.frame.width) > 1 || abs(g.height - panel.frame.height) > 1 { panel.setFrame(g, display: true, animate: true) } }
+        if !s.expanded { let g = geometry(false); if abs(g.width - panel.frame.width) > 1 { glide(to: g) } }
+        else { let g = geometry(true); if abs(g.width - panel.frame.width) > 1 || abs(g.height - panel.frame.height) > 1 { glide(to: g) } }
         let near = panel.frame.insetBy(dx: -12, dy: -12).contains(NSEvent.mouseLocation)
         let inside = ((UserDefaults.standard.bool(forKey: "clickMode") && !s.expanded) ? (near && NSEvent.pressedMouseButtons & 1 != 0) : near) || s.forceOpen
         if inside != s.expanded {
-            withAnimation(.easeOut(duration: 0.2)) { s.expanded = inside }
-            panel.setFrame(geometry(inside), display: true, animate: true)
+            withAnimation(UserDefaults.standard.bool(forKey: "fluid") ? .spring(response: 0.42, dampingFraction: 0.82) : .easeOut(duration: 0.2)) { s.expanded = inside }
+            glide(to: geometry(inside))
             if inside {
-                NSHapticFeedbackManager.defaultPerformer.perform(.alignment, performanceTime: .default)
+                tapHaptic()
                 panel.makeKey()
             } else {
                 browserModel.reset()        // search browser starts fresh next time
             }
+        }
+    }
+
+    /// Puts the panel back at the notch and on top. Run right away and again once a desktop swipe has settled.
+    func reassert() {
+        panel.setFrame(geometry(s.expanded), display: true)
+        panel.orderFrontRegardless()
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.6) { [weak self] in
+            guard let self = self else { return }
+            self.panel.setFrame(self.geometry(self.s.expanded), display: true)
+            self.panel.orderFrontRegardless()
         }
     }
 

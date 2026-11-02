@@ -33,8 +33,10 @@ body.idle-hidden #notch:not(.open):not(.live) { background: transparent; box-sha
 
 #pill { position: absolute; inset: 0; display: flex; align-items: center; justify-content: space-between; padding: 0 14px; opacity: 1; transition: opacity .15s; pointer-events: none; }
 #notch.open #pill { opacity: 0; }
-#pillL, #pillR { display: flex; align-items: center; gap: 6px; font-size: 12px; font-weight: 600; white-space: nowrap; }
-#pillR { color: var(--dim); font-variant-numeric: tabular-nums; }
+#pillL, #pillR { display: flex; align-items: center; gap: 7px; font-size: 12px; font-weight: 600; white-space: nowrap; min-width: 0; }
+#pillL { flex: 1 1 0; justify-content: flex-start; }
+#pillR { flex: 1 1 0; justify-content: flex-end; color: rgba(255,255,255,.82); font-variant-numeric: tabular-nums; }
+#pillL > span { overflow: hidden; text-overflow: ellipsis; }
 #notch:not(.live) #pill { display: none; }
 
 #panel { position: absolute; top: 0; left: 50%; transform: translateX(-50%); width: var(--pw, 700px); height: var(--ph, 220px); opacity: 0; transition: opacity .12s; pointer-events: none; display: flex; flex-direction: column; }

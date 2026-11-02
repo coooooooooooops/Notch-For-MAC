@@ -255,8 +255,14 @@
 
   // ------------------------------------------------------------------ collapsed pill + live activities
   // tabs call N.live(key, null | {prio, left:'text', icon:'name', right:'text'})
+  // A finished activity stays on the pill for a few seconds, so a brief gap (a paused track, a missed poll) never makes it blink out.
+  const liveHold = {};
   N.live = function (key, item) {
-    if (item) N.liveItems[key] = item; else delete N.liveItems[key];
+    if (liveHold[key]) { clearTimeout(liveHold[key]); delete liveHold[key]; }
+    if (item) N.liveItems[key] = item;
+    else if (N.liveItems[key]) {
+      liveHold[key] = setTimeout(() => { delete liveHold[key]; delete N.liveItems[key]; N.updatePill(); }, 3000);
+    }
     N.updatePill();
   };
   let pillSig = '';
