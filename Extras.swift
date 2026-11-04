@@ -510,6 +510,8 @@ extension Store {
                 }
                 if p[2] != self.track {
                     self.track = p[2]; self.artist = p[3]; self.art = nil
+                    let (lt, la) = Store.splitMediaTitle(p[2], p[3])
+                    LyricsStore.shared.load(track: lt, artist: la, duration: self.dur)
                     if !p[4].isEmpty, let u = URL(string: p[4]) {
                         DispatchQueue.global().async {
                             if let d = try? Data(contentsOf: u), let i = NSImage(data: d) { DispatchQueue.main.async { self.art = i } }
@@ -519,6 +521,19 @@ extension Store {
             }
         }
     }
+    /// YouTube titles are usually "Artist - Song (Official Video)" and the "artist" is the channel ("Artist - Topic" or "ArtistVEVO").
+    static func splitMediaTitle(_ title: String, _ channel: String) -> (String, String) {
+        let parts = title.components(separatedBy: " - ")
+        if parts.count >= 2 {
+            let a = parts[0].trimmingCharacters(in: .whitespaces)
+            let t = parts.dropFirst().joined(separator: " - ").trimmingCharacters(in: .whitespaces)
+            if !a.isEmpty && !t.isEmpty { return (t, a) }
+        }
+        var c = channel
+        for suffix in [" - Topic", "VEVO", "Official"] where c.hasSuffix(suffix) { c = String(c.dropLast(suffix.count)).trimmingCharacters(in: .whitespaces) }
+        return (title, c)
+    }
+
     func safariCtl(_ cmd: String) {
         let js: String
         if cmd.hasPrefix("seek:") {
@@ -640,6 +655,9 @@ struct SettingsView: View {
     @AppStorage("hudPower") var hudPower = true
     @AppStorage("hudBluetooth") var hudBluetooth = true
     @AppStorage("replaceVolume") var replaceVolume = false
+    @AppStorage("replaceBrightness") var replaceBrightness = false
+    @AppStorage("outlineTop") var outlineTop = true
+    @ObservedObject var bass = BassBoost.shared
     @AppStorage("updAutoInstall") var autoInstall = false
     @ObservedObject var hk = Hotkeys.shared
     @ObservedObject var rec = HotkeyRecorder.shared
@@ -717,9 +735,22 @@ struct SettingsView: View {
                         Toggle("Battery and charging", isOn: $hudPower)
                         Toggle("Bluetooth", isOn: $hudBluetooth)
                     }.toggleStyle(.switch).controlSize(.small).font(.system(size: 11))
-                    Toggle("Replace the macOS volume bar with this one (needs Accessibility)", isOn: $replaceVolume)
-                        .toggleStyle(.switch).controlSize(.small).font(.system(size: 11))
-                    Text("Pops up beside the notch for a moment. Unless you switch the line above on, macOS still shows its own volume and brightness bars too.").font(.caption).foregroundColor(.gray)
+                    HStack(spacing: 14) {
+                        Toggle("Replace the macOS volume bar (needs Accessibility)", isOn: $replaceVolume)
+                        Toggle("Replace the macOS brightness bar (needs Accessibility)", isOn: $replaceBrightness)
+                    }.toggleStyle(.switch).controlSize(.small).font(.system(size: 11))
+                    Text("Pops up beside the notch for a moment. Switch the two lines above on and NOTCH takes over those keys, so macOS no longer shows its own bar. Hold Shift + Option for tiny steps.").font(.caption).foregroundColor(.gray)
+                }
+                section("Sound") {
+                    HStack(spacing: 14) {
+                        Toggle("Bass booster", isOn: Binding(get: { bass.on }, set: { bass.on = $0 }))
+                            .toggleStyle(.switch).controlSize(.small)
+                        Text(bass.strengthName).font(.system(size: 11, weight: .medium)).foregroundColor(bass.on ? presetColor(accent) : .gray).frame(width: 52, alignment: .leading)
+                        Slider(value: Binding(get: { bass.level }, set: { bass.level = $0 }), in: 0...1).frame(width: 240)
+                        Text("+\(Int(bass.gainDb.rounded())) dB").font(.caption).foregroundColor(.gray)
+                    }.font(.system(size: 11))
+                    Text(bass.status.isEmpty ? "Boosts the low end of everything the Mac plays (macOS 14.2 or newer; macOS asks for System Audio Recording the first time). Also on the music tab." : bass.status)
+                        .font(.caption).foregroundColor(.gray)
                 }
                 section("Music") {
                     HStack(spacing: 14) {
@@ -738,6 +769,7 @@ struct SettingsView: View {
                     HStack { Text("Outline").frame(width: 70, alignment: .leading); outlineSwatches }
                     if outline != "none" {
                         HStack { Text("Thickness").frame(width: 70, alignment: .leading); Slider(value: $outlineWidth, in: 1...4).frame(width: 320); Text(String(format: "%.1f", outlineWidth)).font(.caption).foregroundColor(.gray) }
+                        HStack { Text("").frame(width: 70); Toggle("Outline runs over the top, around the notch itself", isOn: $outlineTop).toggleStyle(.switch).controlSize(.small).font(.system(size: 11)) }
                     }
                     HStack {
                         Text("Font").frame(width: 70, alignment: .leading)
@@ -936,7 +968,8 @@ extension RootView {
         .padding(.horizontal, 4)
         .animation(.easeInOut(duration: 0.25), value: pillModel.left)
         .animation(.easeInOut(duration: 0.25), value: pillModel.left2)
-        .transition(.opacity)
+        .transition(.asymmetric(insertion: AnyTransition.opacity.combined(with: .scale(scale: 0.7)).animation(.spring(response: 0.4, dampingFraction: 0.75).delay(0.08)),
+                                removal: AnyTransition.opacity.animation(.easeIn(duration: 0.12))))
     }
 
     @ViewBuilder func ear(_ e: LeftEar) -> some View {

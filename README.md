@@ -135,3 +135,10 @@ In Safari: **Settings > Advanced**, tick "Show features for web developers", the
 - **3.1.0**: customisable focus and break timer; new AI tab that runs an AI app you already have installed inside the notch; battery icon now matches your charge and turns green, yellow or red; the Shortcuts tab is replaced by a Control Centre; larger release notes text in the Updater.
 - **3.0.1**: the browser now fits the panel, with adjustable zoom.
 - **3.0.0**: new Updater tab that installs releases from GitHub.
+
+## New in 4.3
+
+- **Full lyrics**: click the lyric line under the song title (or the lyrics button) to open every line sung so far; the current one is bright, click a line to jump to it.
+- **Bass booster**: the speaker button on the music tab, or Settings > Sound. On macOS 14.2+ it boosts everything the Mac plays (macOS asks for *System Audio Recording* the first time; NOTCH switches itself off again if no sound reaches it). On older macOS it uses Apple Music's own Bass Booster preset.
+- **Brightness keys**: Settings > Alerts > *Replace the macOS brightness bar* (needs Accessibility, same as the volume one).
+- **Outline**: runs all the way round including over the notch; Settings > Appearance can drop the top line.

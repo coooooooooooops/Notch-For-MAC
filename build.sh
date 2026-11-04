@@ -10,8 +10,16 @@ VERSION="${NOTCH_VERSION:-$(tr -d '[:space:]' < VERSION 2>/dev/null || true)}"
 rm -rf "$APP" .arm .x86
 mkdir -p "$APP/Contents/MacOS" "$APP/Contents/Resources"
 
-swiftc -O -target arm64-apple-macos13.0  main.swift Extras.swift Updater.swift ControlCentre.swift AI.swift Apps.swift Features.swift Weather.swift Notes.swift Days.swift ClipImages.swift Hotkeys.swift Glass.swift Alerts.swift Lyrics.swift FileTools.swift QuickTabs.swift Stage4b.swift -o .arm
-swiftc -O -target x86_64-apple-macos13.0 main.swift Extras.swift Updater.swift ControlCentre.swift AI.swift Apps.swift Features.swift Weather.swift Notes.swift Days.swift ClipImages.swift Hotkeys.swift Glass.swift Alerts.swift Lyrics.swift FileTools.swift QuickTabs.swift Stage4b.swift -o .x86
+SRC="main.swift Extras.swift Updater.swift ControlCentre.swift AI.swift Apps.swift Features.swift Weather.swift Notes.swift Days.swift ClipImages.swift Hotkeys.swift Glass.swift Alerts.swift Lyrics.swift FileTools.swift QuickTabs.swift Stage4b.swift Bass.swift"
+build_all() {
+  swiftc -O -target arm64-apple-macos13.0  $SRC "$1" -o .arm && swiftc -O -target x86_64-apple-macos13.0 $SRC "$1" -o .x86
+}
+# The system-wide bass booster needs a newer toolchain. If it does not build here, the app still installs
+# without it (the bass button then uses Apple Music's own Bass Booster preset).
+if ! build_all BassEngine.swift; then
+  echo "NOTE: BassEngine.swift did not build with this toolchain, building without system-wide bass."
+  build_all BassEngineStub.swift
+fi
 lipo -create .arm .x86 -output "$APP/Contents/MacOS/NOTCH"
 rm -f .arm .x86
 
@@ -42,6 +50,7 @@ cat > "$APP/Contents/Info.plist" <<'EOF'
 <key>NSDownloadsFolderUsageDescription</key><string>Show download progress in the notch.</string>
 <key>NSBluetoothAlwaysUsageDescription</key><string>Connect and disconnect your Bluetooth devices from the notch.</string>
 <key>NSCameraUsageDescription</key><string>Camera mirror and photos in the notch.</string>
+<key>NSAudioCaptureUsageDescription</key><string>The bass booster listens to the sound your Mac is playing so it can boost the low end.</string>
 <key>NSMicrophoneUsageDescription</key><string>Dictation listens to your microphone only while you have it switched on.</string>
 <key>NSSpeechRecognitionUsageDescription</key><string>Dictation turns what you say into text in the notch.</string>
 <key>NSAppTransportSecurity</key><dict><key>NSAllowsLocalNetworking</key><true/></dict>

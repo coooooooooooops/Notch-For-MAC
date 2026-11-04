@@ -241,7 +241,7 @@ extension RootView {
                 .padding(.horizontal, 12).padding(.vertical, 6)
                 .modifier(GlassIf(shape: Capsule(), tint: nil, interactive: false, classic: Color.white.opacity(0.18)))
                 .padding(.bottom, 6)
-                .transition(.opacity)
+                .transition(AnyTransition.opacity.combined(with: .scale(scale: 0.85, anchor: .bottom)).combined(with: .offset(x: 0, y: 8)))
         }
     }
 }

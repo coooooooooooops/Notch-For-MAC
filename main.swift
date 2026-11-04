@@ -15,7 +15,9 @@ final class Store: ObservableObject {
     @Published var expanded = false
     @Published var toast = ""                   // a short message bubble (Done, Copied 40 characters, ...)
     @Published var wob = false                  // the timer-done wobble is running: the shape follows the window
-    @Published var showContent = false          // the tab contents fade in once the shape has opened
+    @Published var showContent = false          // the tab contents bloom in as the shape opens
+    @Published var mounted = false              // the tab contents exist (kept a moment after closing so they can fade out)
+    @Published var lyricsOpen = false           // the music tab shows the full scrolling lyrics
     @Published var tw: CGFloat = 680            // size the notch is opening to
     @Published var th: CGFloat = 220
     @Published var cw: CGFloat = 200            // size of the closed notch (plus the live pill)
@@ -263,27 +265,35 @@ func loadURLs(_ ps: [NSItemProvider], _ done: @escaping ([URL]) -> Void) {
 }
 
 func btn(_ n: String, _ f: @escaping () -> Void) -> some View {
-    Button(action: f) { Image(systemName: n).font(.system(size: 16)).frame(width: 28, height: 28).contentShape(Rectangle()) }.buttonStyle(.plain)
+    Button(action: f) { Image(systemName: n).font(.system(size: 16)).frame(width: 28, height: 28).contentShape(Rectangle()) }.buttonStyle(PressStyle())
 }
 
+/// The notch body: square top (it hangs from the screen edge), round bottom corners drawn as true circular arcs.
+/// `inset` pulls every edge in evenly, so a stroke of width 2 * inset sits exactly inside the fill with the same thickness all round.
 struct NotchShape: Shape {
     var r: CGFloat
+    var inset: CGFloat = 0
     var animatableData: CGFloat { get { r } set { r = newValue } }
     func path(in rect: CGRect) -> Path {
+        let rc = rect.insetBy(dx: inset, dy: inset)
+        let rr = max(0, min(r - inset, min(rc.width, rc.height) / 2))
+        let k = rr * 0.4477                    // circular-arc handle length for a cubic curve
         var p = Path()
-        p.move(to: .zero)
-        p.addLine(to: CGPoint(x: rect.maxX, y: 0))
-        p.addLine(to: CGPoint(x: rect.maxX, y: rect.maxY - r))
-        p.addQuadCurve(to: CGPoint(x: rect.maxX - r, y: rect.maxY), control: CGPoint(x: rect.maxX, y: rect.maxY))
-        p.addLine(to: CGPoint(x: r, y: rect.maxY))
-        p.addQuadCurve(to: CGPoint(x: 0, y: rect.maxY - r), control: CGPoint(x: 0, y: rect.maxY))
+        p.move(to: CGPoint(x: rc.minX, y: rc.minY))
+        p.addLine(to: CGPoint(x: rc.maxX, y: rc.minY))
+        p.addLine(to: CGPoint(x: rc.maxX, y: rc.maxY - rr))
+        p.addCurve(to: CGPoint(x: rc.maxX - rr, y: rc.maxY),
+                   control1: CGPoint(x: rc.maxX, y: rc.maxY - k), control2: CGPoint(x: rc.maxX - k, y: rc.maxY))
+        p.addLine(to: CGPoint(x: rc.minX + rr, y: rc.maxY))
+        p.addCurve(to: CGPoint(x: rc.minX, y: rc.maxY - rr),
+                   control1: CGPoint(x: rc.minX + k, y: rc.maxY), control2: CGPoint(x: rc.minX, y: rc.maxY - k))
         p.closeSubpath()
         return p
     }
 }
 
-/// Open outline of the notch (left side, bottom, right side) so no line runs along the top screen edge.
-/// Inset by half the line width so the stroke is never clipped by the window.
+/// Open outline of the notch (left side, bottom, right side) with no line along the top screen edge.
+/// Uses exactly the same arcs as NotchShape, so the line is the same thickness everywhere, corners included.
 struct NotchOutline: Shape {
     var r: CGFloat
     var inset: CGFloat
@@ -292,16 +302,32 @@ struct NotchOutline: Shape {
         set { r = newValue.first; inset = newValue.second }
     }
     func path(in rect: CGRect) -> Path {
-        let l = rect.minX + inset, rt = rect.maxX - inset, b = rect.maxY - inset
-        let rr = max(0, r - inset)
+        let rc = rect.insetBy(dx: inset, dy: inset)
+        let rr = max(0, min(r - inset, min(rc.width, rc.height) / 2))
+        let k = rr * 0.4477
         var p = Path()
-        p.move(to: CGPoint(x: l, y: 0))
-        p.addLine(to: CGPoint(x: l, y: b - rr))
-        p.addQuadCurve(to: CGPoint(x: l + rr, y: b), control: CGPoint(x: l, y: b))
-        p.addLine(to: CGPoint(x: rt - rr, y: b))
-        p.addQuadCurve(to: CGPoint(x: rt, y: b - rr), control: CGPoint(x: rt, y: b))
-        p.addLine(to: CGPoint(x: rt, y: 0))
+        p.move(to: CGPoint(x: rc.minX, y: rect.minY))
+        p.addLine(to: CGPoint(x: rc.minX, y: rc.maxY - rr))
+        p.addCurve(to: CGPoint(x: rc.minX + rr, y: rc.maxY),
+                   control1: CGPoint(x: rc.minX, y: rc.maxY - k), control2: CGPoint(x: rc.minX + k, y: rc.maxY))
+        p.addLine(to: CGPoint(x: rc.maxX - rr, y: rc.maxY))
+        p.addCurve(to: CGPoint(x: rc.maxX, y: rc.maxY - rr),
+                   control1: CGPoint(x: rc.maxX - k, y: rc.maxY), control2: CGPoint(x: rc.maxX, y: rc.maxY - k))
+        p.addLine(to: CGPoint(x: rc.maxX, y: rect.minY))
         return p
+    }
+}
+
+/// Which tab icon the pointer is over (for the little hover pop).
+final class HoverTracker: ObservableObject { @Published var tab: Int? = nil }
+
+/// Press feedback for every round button: a quick squash and a springy release.
+struct PressStyle: ButtonStyle {
+    func makeBody(configuration: Configuration) -> some View {
+        configuration.label
+            .scaleEffect(configuration.isPressed ? 0.86 : 1)
+            .opacity(configuration.isPressed ? 0.8 : 1)
+            .animation(.spring(response: 0.22, dampingFraction: 0.6), value: configuration.isPressed)
     }
 }
 
@@ -333,6 +359,10 @@ struct RootView: View {
     @AppStorage("outlineWidth") var outlineWidth = 1.5
     @AppStorage("glassBody") var glassBody = false
     @AppStorage("artColors") var artColors = false
+    @AppStorage("fluid") var fluid = true
+    @AppStorage("outlineTop") var outlineTop = true
+    @ObservedObject var bass = BassBoost.shared
+    @StateObject var hover = HoverTracker()
     @StateObject var tabFrames = TabFrames()
     @ObservedObject var live = liveModel
     @ObservedObject var pillModel = LivePillModel.shared
@@ -356,92 +386,144 @@ struct RootView: View {
     var body: some View { GeometryReader { g in layered(g.size) } }
 
     /// The window is a fixed size; only the black shape inside it grows and shrinks (a cheap animation).
+    /// The tab contents are always laid out at their final size and revealed through a mask the same shape as the
+    /// notch, so everything appears to grow out of the notch instead of popping in.
     @ViewBuilder func layered(_ win: CGSize) -> some View {
         let aw: CGFloat = s.wob ? win.width : (s.expanded ? min(s.tw, win.width) : min(s.cw, win.width))
         let ah: CGFloat = s.wob ? win.height : (s.expanded ? min(s.th, win.height) : min(s.ch, win.height))
-        let sp: Animation? = s.wob ? nil : .spring(response: 0.38, dampingFraction: 0.86)
+        let rad: CGFloat = s.expanded ? CGFloat(corner) : 10
+        let sp: Animation? = s.wob ? nil : (fluid ? Animation.spring(response: 0.42, dampingFraction: 0.82) : Animation.easeOut(duration: 0.2))
+        let lw = CGFloat(outlineWidth)
         ZStack(alignment: .top) {
             ZStack(alignment: .top) {
                 if glassBody && s.expanded {
-                    NotchShape(r: CGFloat(corner)).fill(Color.black.opacity(0.55))
-                        .glassSurface(NotchShape(r: CGFloat(corner)))
+                    NotchShape(r: rad).fill(Color.black.opacity(0.55))
+                        .glassSurface(NotchShape(r: rad))
                 } else {
-                    NotchShape(r: s.expanded ? CGFloat(corner) : 10).fill(Color.black)
+                    NotchShape(r: rad).fill(Color.black)
                 }
-                if outline != "none" {
-                    NotchOutline(r: s.expanded ? CGFloat(corner) : 10, inset: CGFloat(outlineWidth) / 2)
-                        .stroke(outlineColor, style: StrokeStyle(lineWidth: CGFloat(outlineWidth), lineCap: .round, lineJoin: .round))
-                        .allowsHitTesting(false)
-                }
+                ambientGlow(rad)
+                if outline != "none" { outlineShape(rad, lw) }
                 if !s.expanded && pillModel.show { pill }
             }
             .frame(width: aw, height: ah)
             .animation(sp, value: aw)
             .animation(sp, value: ah)
-            if s.expanded {
-                VStack(spacing: 8) {
-                    HStack(spacing: 4) {
-                        ForEach(tabOrder, id: \.self) { i in
-                            Button { if s.tab != i { tapHaptic() }; s.tab = i; prefs.editing = false } label: {
-                                Image(systemName: icons[i]).frame(minWidth: 20, maxWidth: 32).frame(height: 24)
-                                    .background(GeometryReader { g in
-                                        Color.clear.preference(key: TabFrameKey.self, value: [i: g.frame(in: .named("tabbar"))])
-                                    })
-                                    .contentShape(Capsule())
-                                    .overlay(alignment: .topTrailing) {
-                                        if i == updaterTab && upd.badge { Circle().fill(Color.red).frame(width: 7, height: 7).offset(x: -2, y: 1) }
-                                    }
-                            }.buttonStyle(.plain)
-                        }
-                        Spacer()
-                        if s.battery >= 0 {
-                            HStack(spacing: 4) {
-                                BatteryIcon(level: s.battery, charging: s.charging, lowPower: s.lowPower)
-                                Text("\(s.battery)%").font(.caption).lineLimit(1)
-                                    .foregroundColor(batteryTint(s.battery, s.charging, s.lowPower) == .white ? .white : batteryTint(s.battery, s.charging, s.lowPower))
-                            }.fixedSize().layoutPriority(1)
-                        }
+            if s.mounted {
+                expandedBody
+                    .frame(width: min(s.tw, win.width), height: min(s.th, win.height), alignment: .top)
+                    .scaleEffect(s.showContent ? 1 : 0.92, anchor: .top)
+                    .opacity(s.showContent ? 1 : 0)
+                    .animation(s.showContent ? Animation.spring(response: 0.46, dampingFraction: 0.84).delay(0.05) : Animation.easeIn(duration: 0.12), value: s.showContent)
+                    .mask(alignment: .top) {
+                        NotchShape(r: rad)
+                            .frame(width: aw, height: ah)
+                            .animation(sp, value: aw)
+                            .animation(sp, value: ah)
                     }
-                    .coordinateSpace(name: "tabbar")
-                    .background(alignment: .topLeading) { tabHighlight }
-                    .onPreferenceChange(TabFrameKey.self) { v in DispatchQueue.main.async { if tabFrames.f != v { tabFrames.f = v } } }
-                    .frame(maxWidth: 640)
-                    .contextMenu { Button("Customise tabs...") { prefs.editing = true } }
-                    Group {
-                        if prefs.editing { TabsEditor() } else {
-                        switch s.tab {
-                        case 0: music
-                        case 1: shelf
-                        case 2: clipboard
-                        case 3: timers
-                        case 4: tools
-                        case 6: BrowserView()
-                        case 7: CameraTab()
-                        case 8: CalendarView()
-                        case 9: SysView()
-                        case 10: ControlCentreView()
-                        case aiTab: AIView()
-                        case quickTab: QuickActionsView()
-                        case dictateTab: DictateView()
-                        case todoTab: TodoView()
-                        case termTab: TerminalView()
-                        case prompterTab: PrompterView()
-                        case 11: SettingsView()
-                        case weatherTab: WeatherView()
-                        case updaterTab: UpdaterView()
-                        default: AppsView()
-                        }
-                        }
-                    }.frame(maxWidth: .infinity, maxHeight: .infinity)
-                }.padding(.top, 38).padding(.horizontal, 20).padding(.bottom, 12)
-                .overlay(alignment: .bottom) { toastView }
-                .animation(.easeInOut(duration: 0.2), value: s.toast)
-                .opacity(s.showContent ? 1 : 0).allowsHitTesting(s.showContent)
+                    .allowsHitTesting(s.showContent)
             }
         }.frame(width: win.width, height: win.height, alignment: .top)
         .foregroundColor(.white).preferredColorScheme(.dark).tint(presetColor(accent)).fontDesign(fontDesignValue(fd))
         .onAppear { fixTab() }
         .onChange(of: prefs.hidden) { _ in fixTab() }
+    }
+
+    /// The outline: a closed loop that runs over the top (the notch itself) too, or an open one without the top line.
+    /// Both use the notch's own arcs, so the thickness is even all the way round.
+    @ViewBuilder func outlineShape(_ rad: CGFloat, _ lw: CGFloat) -> some View {
+        if outlineTop {
+            NotchShape(r: rad, inset: lw / 2)
+                .stroke(outlineColor, style: StrokeStyle(lineWidth: lw, lineJoin: .miter))
+                .allowsHitTesting(false)
+        } else {
+            NotchOutline(r: rad, inset: lw / 2)
+                .stroke(outlineColor, style: StrokeStyle(lineWidth: lw, lineCap: .butt, lineJoin: .round))
+                .allowsHitTesting(false)
+        }
+    }
+
+    /// A soft wash of the album colour inside the open notch while music plays.
+    @ViewBuilder func ambientGlow(_ rad: CGFloat) -> some View {
+        let on = s.expanded && s.tab == 0 && s.playing && !prefs.editing
+        let c = s.artColor ?? presetColor(accent)
+        RadialGradient(colors: [c.opacity(0.30), c.opacity(0.0)], center: UnitPoint(x: 0.14, y: 0.62), startRadius: 0, endRadius: 380)
+            .clipShape(NotchShape(r: rad))
+            .opacity(on ? 1 : 0)
+            .animation(.easeInOut(duration: 0.6), value: on)
+            .allowsHitTesting(false)
+    }
+
+    /// Everything inside the open notch: the tab strip and the current tab.
+    @ViewBuilder var expandedBody: some View {
+        VStack(spacing: 8) {
+            HStack(spacing: 4) {
+                ForEach(tabOrder, id: \.self) { i in
+                    Button {
+                        if s.tab != i { tapHaptic() }
+                        withAnimation(.spring(response: 0.34, dampingFraction: 0.88)) { s.tab = i; prefs.editing = false }
+                    } label: {
+                        Image(systemName: icons[i]).frame(minWidth: 20, maxWidth: 32).frame(height: 24)
+                            .background(GeometryReader { g in
+                                Color.clear.preference(key: TabFrameKey.self, value: [i: g.frame(in: .named("tabbar"))])
+                            })
+                            .contentShape(Capsule())
+                            .overlay(alignment: .topTrailing) {
+                                if i == updaterTab && upd.badge { Circle().fill(Color.red).frame(width: 7, height: 7).offset(x: -2, y: 1) }
+                            }
+                            .scaleEffect(hover.tab == i && s.tab != i ? 1.16 : 1)
+                            .animation(.spring(response: 0.25, dampingFraction: 0.6), value: hover.tab)
+                    }
+                    .buttonStyle(PressStyle())
+                    .onHover { h in if h { hover.tab = i } else if hover.tab == i { hover.tab = nil } }
+                }
+                Spacer()
+                if s.battery >= 0 {
+                    HStack(spacing: 4) {
+                        BatteryIcon(level: s.battery, charging: s.charging, lowPower: s.lowPower)
+                        Text("\(s.battery)%").font(.caption).lineLimit(1)
+                            .contentTransition(.numericText())
+                            .foregroundColor(batteryTint(s.battery, s.charging, s.lowPower) == .white ? .white : batteryTint(s.battery, s.charging, s.lowPower))
+                    }.fixedSize().layoutPriority(1)
+                }
+            }
+            .coordinateSpace(name: "tabbar")
+            .background(alignment: .topLeading) { tabHighlight }
+            .onPreferenceChange(TabFrameKey.self) { v in DispatchQueue.main.async { if tabFrames.f != v { tabFrames.f = v } } }
+            .frame(maxWidth: 640)
+            .contextMenu { Button("Customise tabs...") { prefs.editing = true } }
+            Group {
+                if prefs.editing { TabsEditor() } else {
+                switch s.tab {
+                case 0: music
+                case 1: shelf
+                case 2: clipboard
+                case 3: timers
+                case 4: tools
+                case 6: BrowserView()
+                case 7: CameraTab()
+                case 8: CalendarView()
+                case 9: SysView()
+                case 10: ControlCentreView()
+                case aiTab: AIView()
+                case quickTab: QuickActionsView()
+                case dictateTab: DictateView()
+                case todoTab: TodoView()
+                case termTab: TerminalView()
+                case prompterTab: PrompterView()
+                case 11: SettingsView()
+                case weatherTab: WeatherView()
+                case updaterTab: UpdaterView()
+                default: AppsView()
+                }
+                }
+            }
+            .id(prefs.editing ? -1 : s.tab)
+            .transition(.asymmetric(insertion: AnyTransition.opacity.combined(with: .offset(x: 0, y: 8)), removal: .identity))
+            .frame(maxWidth: .infinity, maxHeight: .infinity)
+        }.padding(.top, 38).padding(.horizontal, 20).padding(.bottom, 12)
+        .overlay(alignment: .bottom) { toastView }
+        .animation(.spring(response: 0.3, dampingFraction: 0.8), value: s.toast)
     }
 
     /// The coloured capsule behind the selected tab. One view that glides from tab to tab.
@@ -454,30 +536,101 @@ struct RootView: View {
         }
     }
 
+    // MARK: Music tab
+
+    /// Album cover with a glow in the cover's own colour. It settles back a little when the music is paused.
+    func artView(_ size: CGFloat) -> some View {
+        ZStack {
+            if let a = s.art { Image(nsImage: a).resizable().scaledToFill().transition(.opacity) }
+            else { Color.white.opacity(0.1).overlay(Image(systemName: "music.note").font(.largeTitle)) }
+        }
+        .frame(width: size, height: size)
+        .clipShape(RoundedRectangle(cornerRadius: size > 80 ? 12 : 9, style: .continuous))
+        .shadow(color: (s.artColor ?? Color.black).opacity(s.playing && s.art != nil ? 0.5 : 0), radius: 14, x: 0, y: 6)
+        .scaleEffect(s.playing ? 1 : 0.94)
+        .animation(.spring(response: 0.5, dampingFraction: 0.7), value: s.playing)
+        .animation(.easeInOut(duration: 0.35), value: s.track)
+    }
+
+    func extraToggle(_ icon: String, on: Bool, help: String, _ f: @escaping () -> Void) -> some View {
+        Button(action: f) {
+            Image(systemName: icon).font(.system(size: 12, weight: .semibold))
+                .foregroundColor(on ? presetColor(accent) : Color.white.opacity(0.55))
+                .frame(width: 26, height: 26)
+                .background(Circle().fill(on ? presetColor(accent).opacity(0.2) : Color.white.opacity(0.08)))
+                .contentShape(Circle())
+                .animation(.easeOut(duration: 0.2), value: on)
+        }.buttonStyle(PressStyle()).help(help)
+    }
+
+    var playButton: some View {
+        Button { s.ctl("playpause") } label: {
+            Image(systemName: s.playing ? "pause.fill" : "play.fill").font(.system(size: 14, weight: .bold))
+                .frame(width: 34, height: 34).contentShape(Circle())
+                .modifier(GlassIf(shape: Circle(), tint: nil, interactive: true, classic: Color.white.opacity(0.14)))
+        }.buttonStyle(PressStyle())
+    }
+
+    func musicControls(bars: Bool) -> some View {
+        HStack(spacing: 10) {
+            btn("backward.fill") { s.ctl("previous track") }
+            playButton
+            btn("forward.fill") { s.ctl("next track") }
+            Spacer(minLength: 4)
+            extraToggle("text.quote", on: s.lyricsOpen, help: "Full lyrics") {
+                withAnimation(.spring(response: 0.42, dampingFraction: 0.84)) { s.lyricsOpen.toggle() }
+            }
+            extraToggle("speaker.wave.3.fill", on: bass.on, help: "Bass booster (strength in Settings)") {
+                bass.toggle()
+                s.say(bass.on ? "Bass booster on" : "Bass booster off")
+            }
+            if bars { Bars(on: s.playing) }
+        }
+    }
+
     var music: some View {
+        Group { if s.lyricsOpen { musicLyrics } else { musicMain } }
+            .transition(.opacity)
+    }
+
+    var musicMain: some View {
         HStack(spacing: 14) {
-            Group {
-                if let a = s.art { Image(nsImage: a).resizable().scaledToFill() }
-                else { Color.white.opacity(0.1).overlay(Image(systemName: "music.note").font(.largeTitle)) }
-            }.frame(width: 96, height: 96).clipShape(RoundedRectangle(cornerRadius: 12))
+            artView(96)
             VStack(alignment: .leading, spacing: 6) {
-                Text(s.track).font(.headline).lineLimit(1)
-                Text(s.artist).font(.subheadline).foregroundColor(.gray).lineLimit(1)
+                Text(s.track).font(.headline).lineLimit(1).id("t" + s.track)
+                    .transition(.asymmetric(insertion: AnyTransition.opacity.combined(with: .offset(x: 0, y: 6)), removal: .opacity))
+                Text(s.artist).font(.subheadline).foregroundColor(.gray).lineLimit(1).id("a" + s.track + s.artist)
+                    .transition(.asymmetric(insertion: AnyTransition.opacity.combined(with: .offset(x: 0, y: 6)), removal: .opacity))
                 LyricsLine()
-                HStack(spacing: 14) {
-                    btn("backward.fill") { s.ctl("previous track") }
-                    btn(s.playing ? "pause.fill" : "play.fill") { s.ctl("playpause") }
-                    btn("forward.fill") { s.ctl("next track") }
-                    Spacer(minLength: 8)
-                    Bars(on: s.playing)
-                }
+                musicControls(bars: true)
                 Scrubber()
             }.frame(minWidth: 250, maxWidth: 340, alignment: .leading)
+            .animation(.easeOut(duration: 0.28), value: s.track)
             Spacer()
             VStack(alignment: .trailing) {
-                Text(s.now, format: .dateTime.hour().minute()).font(.system(size: 36, weight: .light)).foregroundColor(presetColor(dateColor)).contextMenu { colorMenu }
+                Text(s.now, format: .dateTime.hour().minute()).font(.system(size: 36, weight: .light)).foregroundColor(presetColor(dateColor))
+                    .contentTransition(.numericText()).contextMenu { colorMenu }
                 Text(s.now, format: .dateTime.weekday(.wide).day().month()).font(.caption).foregroundColor(presetColor(dateColor).opacity(0.75)).contextMenu { colorMenu }
             }
+        }
+    }
+
+    /// The music tab with the full lyrics open: the song on the left, every line sung so far on the right.
+    var musicLyrics: some View {
+        HStack(alignment: .top, spacing: 20) {
+            VStack(alignment: .leading, spacing: 8) {
+                HStack(spacing: 10) {
+                    artView(64)
+                    VStack(alignment: .leading, spacing: 2) {
+                        Text(s.track).font(.system(size: 13, weight: .semibold)).lineLimit(2)
+                        Text(s.artist).font(.caption).foregroundColor(.gray).lineLimit(1)
+                    }
+                }
+                Spacer(minLength: 0)
+                musicControls(bars: false)
+                Scrubber()
+            }.frame(width: 250).frame(maxHeight: .infinity)
+            LyricsPanel().frame(maxWidth: .infinity, maxHeight: .infinity)
         }
     }
 
@@ -586,6 +739,7 @@ struct RootView: View {
             VStack(spacing: 6) {
                 Text(s.onBreak ? "Break" : "Focus").font(.caption).foregroundColor(.gray)
                 Text(mmss(s.remaining)).font(.system(size: 40, weight: .light, design: .monospaced))
+                    .contentTransition(.numericText()).animation(.easeInOut(duration: 0.25), value: s.remaining)
                 HStack {
                     btn(s.running ? "pause.fill" : "play.fill") { s.running.toggle() }
                     btn("arrow.counterclockwise") { s.running = false; s.onBreak = false; s.remaining = s.focusMins * 60 }
@@ -697,6 +851,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     var wobbling = false
     var tickN = 0
     var shrinkSince: Date?
+    var unmountWork: DispatchWorkItem?
 
     /// The window only ever jumps (never animates, which was the lag). It grows straight away so the shape has room
     /// to open, and shrinks a moment after the shape has finished closing. The visible animation is all in SwiftUI.
@@ -708,7 +863,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         }
         if abs(w - target.width) > 1 || abs(h - target.height) > 1 {
             if let t = shrinkSince {
-                if Date().timeIntervalSince(t) > 0.38 { panel.setFrame(target, display: true); shrinkSince = nil }
+                if Date().timeIntervalSince(t) > 0.55 { panel.setFrame(target, display: true); shrinkSince = nil }
             } else { shrinkSince = Date() }
         } else { shrinkSince = nil }
     }
@@ -724,6 +879,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         let extra = CGFloat((UserDefaults.standard.object(forKey: "pillExtra") as? Double) ?? 92)
         var ew: CGFloat = 680, eh: CGFloat = 220
         switch s.tab {
+        case 0: if s.lyricsOpen { eh = 330 }   // music with the full lyrics open
         case 3: eh = 230            // timers (focus / break length pills)
         case 5: if AppsModel.shared.openKey != nil { ew = 820; eh = 460 }   // an app running inside the notch
         case 4: ew = 820; eh = 250   // notes + water + counter + days (customise panel needs room)
@@ -752,14 +908,23 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         panel.level = NSWindow.Level(rawValue: NSWindow.Level.mainMenu.rawValue + 3)
         panel.backgroundColor = .clear; panel.isOpaque = false; panel.hasShadow = false
         panel.hidesOnDeactivate = false; panel.isMovable = false
-        panel.collectionBehavior = [.canJoinAllSpaces, .fullScreenAuxiliary, .stationary]
+        // Stay put on every desktop, over full-screen apps, and whichever app or window is in front.
+        panel.collectionBehavior = [.canJoinAllSpaces, .fullScreenAuxiliary, .stationary, .ignoresCycle, .canJoinAllApplications]
+        panel.isFloatingPanel = true
+        panel.canHide = false
+        panel.animationBehavior = .none
+        panel.isReleasedWhenClosed = false
         panel.contentView = NSHostingView(rootView: RootView().environmentObject(s))
         panel.orderFrontRegardless()
-        s.start(); liveModel.start(); AlertCenter.shared.start(); Updater.shared.start()
+        s.start(); liveModel.start(); AlertCenter.shared.start(); Updater.shared.start(); BassBoost.shared.restore()
         // keep the notch (and its live pill) in place when you swipe between desktops, wake the Mac or change displays
         let wsc = NSWorkspace.shared.notificationCenter
         wsc.addObserver(forName: NSWorkspace.activeSpaceDidChangeNotification, object: nil, queue: .main) { [weak self] _ in self?.reassert() }
         wsc.addObserver(forName: NSWorkspace.didWakeNotification, object: nil, queue: .main) { [weak self] _ in self?.reassert() }
+        wsc.addObserver(forName: NSWorkspace.screensDidWakeNotification, object: nil, queue: .main) { [weak self] _ in self?.reassert() }
+        // switching to another app or window must never knock the notch off the screen
+        wsc.addObserver(forName: NSWorkspace.didActivateApplicationNotification, object: nil, queue: .main) { [weak self] _ in self?.keepOnTop() }
+        wsc.addObserver(forName: NSWorkspace.didLaunchApplicationNotification, object: nil, queue: .main) { [weak self] _ in self?.keepOnTop() }
         NotificationCenter.default.addObserver(forName: NSApplication.didChangeScreenParametersNotification, object: nil, queue: .main) { [weak self] _ in self?.reassert() }
         Timer.scheduledTimer(withTimeInterval: 0.08, repeats: true) { [weak self] _ in self?.check() }
         Timer.scheduledTimer(withTimeInterval: 60, repeats: true) { _ in IdleSweeper.run() }
@@ -871,7 +1036,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     func check() {
         LivePillModel.shared.refresh(s, liveModel)
         tickN += 1
-        if tickN % 25 == 0, !panel.isVisible { panel.orderFrontRegardless() }
+        if tickN % 12 == 0, !panel.isVisible || !panel.occlusionState.contains(.visible) { keepOnTop() }
         if wobbling { return }
         let ge = geometry(true), gc = geometry(false)
         if s.tw != ge.width { s.tw = ge.width }
@@ -885,20 +1050,43 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         let inside = ((UserDefaults.standard.bool(forKey: "clickMode") && !s.expanded) ? (near && NSEvent.pressedMouseButtons & 1 != 0) : near) || s.forceOpen
         if inside != s.expanded {
             let fluid = UserDefaults.standard.bool(forKey: "fluid")
-            withAnimation(fluid ? .spring(response: 0.38, dampingFraction: 0.86) : .easeOut(duration: 0.2)) { s.expanded = inside }
+            unmountWork?.cancel()
+            if inside { s.mounted = true }        // the contents exist before the shape starts to grow
+            withAnimation(fluid ? .spring(response: 0.42, dampingFraction: 0.82) : .easeOut(duration: 0.2)) { s.expanded = inside }
             syncFrame(inside ? ge : gc)
             if inside {
                 tapHaptic()
                 panel.makeKey()
-                DispatchQueue.main.asyncAfter(deadline: .now() + 0.12) { [weak self] in
+                // the contents bloom in as the shape grows out of the notch
+                DispatchQueue.main.async { [weak self] in
                     guard let self = self, self.s.expanded else { return }
-                    withAnimation(.easeOut(duration: 0.18)) { self.s.showContent = true }
+                    self.s.showContent = true
                 }
             } else {
-                withAnimation(.easeIn(duration: 0.1)) { s.showContent = false }
-                browserModel.reset()        // search browser starts fresh next time
+                s.showContent = false
+                DictationModel.shared.stop()        // the mic never stays on after the notch is put away
+                browserModel.reset()                // search browser starts fresh next time
+                // take the contents away once the shape has finished closing
+                let w = DispatchWorkItem { [weak self] in
+                    guard let self = self, !self.s.expanded else { return }
+                    self.s.mounted = false
+                }
+                unmountWork = w
+                DispatchQueue.main.asyncAfter(deadline: .now() + 0.6, execute: w)
             }
         }
+    }
+
+    /// Makes sure the notch is still on screen and in front (it is, unless macOS moved it). Cheap, safe to call often.
+    func keepOnTop() {
+        let lvl = NSWindow.Level(rawValue: NSWindow.Level.mainMenu.rawValue + 3)
+        if panel.level != lvl { panel.level = lvl }
+        panel.orderFrontRegardless()
+    }
+
+    func applicationWillTerminate(_ n: Notification) {
+        BassBoost.shared.shutdown()
+        DictationModel.shared.forceOff()
     }
 
     /// Puts the panel back at the notch and on top. Run right away and again once a desktop swipe has settled.

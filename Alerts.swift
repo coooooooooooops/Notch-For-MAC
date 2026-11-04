@@ -66,15 +66,18 @@ extension SysAudio {
     }
 }
 
-/// Optional: catches the keyboard volume keys, handles them itself and so replaces the macOS volume bar with the
-/// notch one. Needs the Accessibility permission. Brightness keys are not touched. Off by default.
+/// Optional: catches the keyboard volume and brightness keys, handles them itself and so replaces the macOS bars with the
+/// notch ones. Needs the Accessibility permission. Volume and brightness are switched on separately. Off by default.
+/// A key is only taken over when this Mac can actually change that setting (an HDMI output with no volume, or an external
+/// display with no brightness control, keeps working the normal macOS way). Hold Shift + Option for quarter steps.
 final class VolumeKeys {
     static let shared = VolumeKeys()
     var tap: CFMachPort?
     private var source: CFRunLoopSource?
     private var asked = false
 
-    func sync(_ on: Bool) {
+    func sync(volume: Bool, brightness: Bool) {
+        let on = volume || brightness
         if on && tap == nil { start() } else if !on && tap != nil { stop() }
     }
 
@@ -84,7 +87,7 @@ final class VolumeKeys {
                 asked = true
                 let opts = [kAXTrustedCheckOptionPrompt.takeUnretainedValue() as String: true] as CFDictionary
                 _ = AXIsProcessTrustedWithOptions(opts)
-                Store.shared.say("Allow NOTCH under Accessibility to take over the volume keys", hold: 4)
+                Store.shared.say("Allow NOTCH under Accessibility to take over the volume and brightness keys", hold: 4)
             }
             return
         }
@@ -98,8 +101,15 @@ final class VolumeKeys {
             }
             let keyCode = (ns.data1 & 0xFFFF0000) >> 16
             let down = ((ns.data1 & 0x0000FF00) >> 8) == 0xA
-            guard keyCode == 0 || keyCode == 1 || keyCode == 7 else { return Unmanaged.passUnretained(event) }
-            if down { DispatchQueue.main.async { VolumeKeys.shared.handle(keyCode) } }
+            let d = UserDefaults.standard
+            let isVol = keyCode == 0 || keyCode == 1 || keyCode == 7
+            let isBri = keyCode == 2 || keyCode == 3
+            guard (isVol && d.bool("replaceVolume") && SysAudio.volume() != nil)
+                    || (isBri && d.bool("replaceBrightness") && Bright.get() != nil) else {
+                return Unmanaged.passUnretained(event)
+            }
+            let fine = ns.modifierFlags.contains(.shift) && ns.modifierFlags.contains(.option)
+            if down { DispatchQueue.main.async { VolumeKeys.shared.handle(keyCode, fine: fine) } }
             return nil      // swallow it so macOS does not show its own bar
         }
         guard let t = CGEvent.tapCreate(tap: .cgSessionEventTap, place: .headInsertEventTap, options: .defaultTap,
@@ -117,17 +127,27 @@ final class VolumeKeys {
         source = nil
     }
 
-    func handle(_ key: Int) {
-        guard let cur = SysAudio.volume() else { return }
-        var level = cur.level
-        var muted = cur.muted
+    func handle(_ key: Int, fine: Bool = false) {
+        let step = fine ? 1.0 / 64 : 1.0 / 16
         switch key {
-        case 0: level = min(1, level + 1.0 / 16); muted = false
-        case 1: level = max(0, level - 1.0 / 16); muted = false
-        default: muted.toggle()
+        case 0, 1, 7:
+            guard let cur = SysAudio.volume() else { return }
+            var level = cur.level
+            var muted = cur.muted
+            switch key {
+            case 0: level = min(1, level + step); muted = false
+            case 1: level = max(0, level - step); muted = false
+            default: muted.toggle()
+            }
+            SysAudio.setVolume(level, muted: muted)
+            AlertCenter.shared.post(.volume(level, muted), for: 1.6)
+        case 2, 3:
+            guard let cur = Bright.get() else { return }
+            let level = min(1, max(0, cur + (key == 2 ? step : -step)))
+            Bright.set(level)
+            AlertCenter.shared.post(.brightness(level), for: 1.6)
+        default: break
         }
-        SysAudio.setVolume(level, muted: muted)
-        AlertCenter.shared.post(.volume(level, muted), for: 1.6)
     }
 }
 
@@ -202,7 +222,7 @@ final class AlertCenter {
         n += 1
         let d = UserDefaults.standard
         if d.bool(forKey: "hudPower") { checkPower(Store.shared) }
-        VolumeKeys.shared.sync(d.bool(forKey: "replaceVolume"))
+        VolumeKeys.shared.sync(volume: d.bool(forKey: "replaceVolume"), brightness: d.bool(forKey: "replaceBrightness"))
         let wantVol = d.bool(forKey: "hudVolume"), wantBright = d.bool(forKey: "hudBrightness")
         let wantBT = d.bool(forKey: "hudBluetooth") && n % 15 == 0      // about every 5 seconds
         guard wantVol || wantBright || wantBT else { return }

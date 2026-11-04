@@ -31,20 +31,24 @@ func gpuLoad() -> Double {
 }
 
 // MARK: Dictation (Apple's speech recognition, on the Mac itself whenever the language supports it)
+// 4.3: switching the mic off now really releases it. Every session gets its own audio engine, the recognition task is
+// cancelled, and the engine is stopped, reset and thrown away, so the orange microphone dot goes out straight away.
 final class DictationModel: ObservableObject {
     static let shared = DictationModel()
     @Published var text = ""
     @Published var listening = false
     @Published var status = "Tap the mic and talk"
 
-    private let engine = AVAudioEngine()
+    private var engine: AVAudioEngine?
     private var request: SFSpeechAudioBufferRecognitionRequest?
     private var task: SFSpeechRecognitionTask?
+    private var session = 0                 // bumped on every start / stop so a late callback from an old session is ignored
     private let recognizer: SFSpeechRecognizer? = SFSpeechRecognizer(locale: Locale.current) ?? SFSpeechRecognizer()
 
     func toggle() { listening ? stop() : start() }
 
     func start() {
+        if listening { return }
         SFSpeechRecognizer.requestAuthorization { auth in
             DispatchQueue.main.async {
                 guard auth == .authorized else {
@@ -57,7 +61,7 @@ final class DictationModel: ObservableObject {
                             self.status = "Allow the Microphone for NOTCH in System Settings > Privacy & Security"
                             return
                         }
-                        self.begin()
+                        if !self.listening { self.begin() }
                     }
                 }
             }
@@ -66,46 +70,72 @@ final class DictationModel: ObservableObject {
 
     private func begin() {
         guard let rec = recognizer, rec.isAvailable else { status = "Speech recognition isn't available right now"; return }
+        releaseAudio()                      // make sure nothing from an earlier session is still holding the mic
+        session += 1
+        let mine = session
         text = ""
         let req = SFSpeechAudioBufferRecognitionRequest()
         req.shouldReportPartialResults = true
         if rec.supportsOnDeviceRecognition { req.requiresOnDeviceRecognition = true }
         request = req
-        let input = engine.inputNode
+        let eng = AVAudioEngine()
+        engine = eng
+        let input = eng.inputNode
         let format = input.outputFormat(forBus: 0)
+        guard format.sampleRate > 0 else { releaseAudio(); status = "No microphone found"; return }
         input.removeTap(onBus: 0)
         input.installTap(onBus: 0, bufferSize: 1024, format: format) { buf, _ in req.append(buf) }
-        engine.prepare()
-        do { try engine.start() } catch { status = "Couldn't start the microphone"; return }
+        eng.prepare()
+        do { try eng.start() } catch { releaseAudio(); status = "Couldn't start the microphone"; return }
         listening = true
         status = "Listening..."
         task = rec.recognitionTask(with: req) { [weak self] result, error in
             DispatchQueue.main.async {
-                guard let self = self else { return }
+                guard let self = self, self.session == mine else { return }     // an old session: ignore
                 if let r = result { self.text = r.bestTranscription.formattedString }
-                if error != nil || (result?.isFinal ?? false) { self.teardown() }
+                if error != nil || (result?.isFinal ?? false) {
+                    let had = self.listening
+                    self.releaseAudio()
+                    self.listening = false
+                    if had { self.finishStatus() }
+                }
             }
         }
     }
 
-    private func teardown() {
-        if engine.isRunning { engine.stop() }
-        engine.inputNode.removeTap(onBus: 0)
+    /// Stops the microphone completely: tap off, engine stopped and reset, recognition cancelled.
+    private func releaseAudio() {
+        if let e = engine {
+            e.inputNode.removeTap(onBus: 0)
+            if e.isRunning { e.stop() }
+            e.reset()
+        }
+        engine = nil
         request?.endAudio()
+        task?.cancel()
         task = nil
         request = nil
-        listening = false
+    }
+
+    private func finishStatus() {
+        if text.isEmpty { status = "Didn't catch anything" }
+        else { copy(); status = "Copied to the clipboard" }
     }
 
     func stop() {
-        guard listening else { return }
-        teardown()
-        if text.isEmpty {
-            status = "Didn't catch anything"
-        } else {
-            copy()
-            status = "Copied to the clipboard"
-        }
+        guard listening || engine != nil else { return }
+        session += 1                        // anything the old recognition task still says is now ignored
+        releaseAudio()
+        let was = listening
+        listening = false
+        if was { finishStatus() }
+    }
+
+    /// Hard stop with no clipboard side effects (used when the notch closes).
+    func forceOff() {
+        session += 1
+        releaseAudio()
+        listening = false
     }
 
     func copy() {
