@@ -844,6 +844,34 @@ final class NotchPanel: NSPanel {
     }
 }
 
+/// Puts the notch window into its own always-visible layer that belongs to no desktop, so it is simply there on every
+/// desktop and full-screen app (nothing spawns in, nothing freezes when you switch). Uses macOS's window server calls,
+/// looked up at run time: if they ever go missing the app still works with the normal all-desktops behaviour.
+enum AllSpaces {
+    private static var space = 0
+    private typealias Conn = @convention(c) () -> Int32
+    private typealias Create = @convention(c) (Int32, UnsafeRawPointer?, CFDictionary?) -> Int
+    private typealias Level = @convention(c) (Int32, Int, Int32) -> Void
+    private typealias AddWin = @convention(c) (Int32, CFArray, CFArray) -> Void
+    private typealias Show = @convention(c) (Int32, CFArray) -> Void
+
+    static func pin(_ w: NSWindow) {
+        guard w.windowNumber > 0,
+              let h = dlopen("/System/Library/PrivateFrameworks/SkyLight.framework/SkyLight", RTLD_NOW),
+              let c = dlsym(h, "CGSMainConnectionID"), let cr = dlsym(h, "CGSSpaceCreate"),
+              let lv = dlsym(h, "CGSSpaceSetAbsoluteLevel"), let ad = dlsym(h, "CGSAddWindowsToSpaces"),
+              let sh = dlsym(h, "CGSShowSpaces") else { return }
+        let conn = unsafeBitCast(c, to: Conn.self)()
+        if space == 0 {
+            space = unsafeBitCast(cr, to: Create.self)(conn, UnsafeRawPointer(bitPattern: 1), nil)
+            guard space != 0 else { return }
+            unsafeBitCast(lv, to: Level.self)(conn, space, 2147483647)
+        }
+        unsafeBitCast(ad, to: AddWin.self)(conn, [w.windowNumber] as CFArray, [space] as CFArray)
+        unsafeBitCast(sh, to: Show.self)(conn, [space] as CFArray)
+    }
+}
+
 final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     static let notchLevel = NSWindow.Level(rawValue: Int(CGShieldingWindowLevel()) - 1)   // above full-screen apps and every window
     var panel: NotchPanel!
@@ -932,6 +960,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         panel.isReleasedWhenClosed = false
         panel.contentView = NSHostingView(rootView: RootView().environmentObject(s))
         panel.orderFrontRegardless()
+        AllSpaces.pin(panel)
         s.start(); liveModel.start(); AlertCenter.shared.start(); Updater.shared.start(); BassBoost.shared.restore()
         // keep the notch (and its live pill) in place when you swipe between desktops, wake the Mac or change displays
         let wsc = NSWorkspace.shared.notificationCenter
@@ -1101,6 +1130,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
 
     /// Makes sure the notch is still on screen and in front (it is, unless macOS moved it). Cheap, safe to call often.
     func keepOnTop() {
+        AllSpaces.pin(panel)
         if panel.level != AppDelegate.notchLevel { panel.level = AppDelegate.notchLevel }
         panel.orderFrontRegardless()
     }

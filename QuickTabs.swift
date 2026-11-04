@@ -150,10 +150,18 @@ enum Meeting {
 enum WindowSnap {
     enum Spot { case left, right, top, bottom, full, center }
 
+    private static var asked = false
+
     static func snap(_ spot: Spot) {
-        let opts = [kAXTrustedCheckOptionPrompt.takeUnretainedValue() as String: true] as CFDictionary
-        guard AXIsProcessTrustedWithOptions(opts) else {
-            Store.shared.say("Allow NOTCH in Privacy & Security > Accessibility, then try again", hold: 4)
+        guard AXIsProcessTrusted() else {
+            if !asked {
+                asked = true      // macOS shows its own prompt once per launch
+                let opts = [kAXTrustedCheckOptionPrompt.takeUnretainedValue() as String: true] as CFDictionary
+                _ = AXIsProcessTrustedWithOptions(opts)
+            } else if let u = URL(string: "x-apple.systempreferences:com.apple.preference.security?Privacy_Accessibility") {
+                NSWorkspace.shared.open(u)      // after that, go straight to the switch instead of another pop-up
+            }
+            Store.shared.say("Turn NOTCH on under Privacy & Security > Accessibility, then try again", hold: 4)
             return
         }
         guard let app = NSWorkspace.shared.frontmostApplication, app.bundleIdentifier != Bundle.main.bundleIdentifier else {

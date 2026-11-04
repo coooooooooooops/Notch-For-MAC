@@ -72,6 +72,14 @@ rm -rf dmg NOTCH.dmg && mkdir dmg && cp -R "$APP" dmg/ && ln -s /Applications dm
 hdiutil create -volname NOTCH -srcfolder dmg -ov -format UDZO NOTCH.dmg >/dev/null && rm -rf dmg
 echo "Made NOTCH.dmg (drag-to-install)."
 
+# One time only: clear an old, stale Accessibility entry (made by earlier ad-hoc builds) so macOS asks cleanly once.
+# From here on the signature is stable and the permission survives rebuilds.
+MARK="$HOME/Library/Application Support/NOTCH/.tcc-reset-2"
+if [ ! -f "$MARK" ]; then
+  tccutil reset Accessibility com.coops.notch >/dev/null 2>&1 || true
+  mkdir -p "$(dirname "$MARK")" && touch "$MARK"
+fi
+
 pkill -x NOTCH 2>/dev/null || true
 rm -rf "/Applications/$APP"
 cp -R "$APP" /Applications/
