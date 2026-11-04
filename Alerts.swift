@@ -104,8 +104,8 @@ final class VolumeKeys {
             let d = UserDefaults.standard
             let isVol = keyCode == 0 || keyCode == 1 || keyCode == 7
             let isBri = keyCode == 2 || keyCode == 3
-            guard (isVol && d.bool("replaceVolume") && SysAudio.volume() != nil)
-                    || (isBri && d.bool("replaceBrightness") && Bright.get() != nil) else {
+            guard (isVol && d.bool(forKey: "replaceVolume") && SysAudio.volume() != nil)
+                    || (isBri && d.bool(forKey: "replaceBrightness") && Bright.get() != nil) else {
                 return Unmanaged.passUnretained(event)
             }
             let fine = ns.modifierFlags.contains(.shift) && ns.modifierFlags.contains(.option)
