@@ -389,6 +389,10 @@ struct CalendarView: View {
 final class Sys: ObservableObject {
     @Published var down: [Double] = Array(repeating: 0, count: 40)
     @Published var cpu = 0.0
+    @Published var gpu = 0.0
+    @Published var gpuHist: [Double] = Array(repeating: 0, count: 40)
+    @Published var cpuHist: [Double] = Array(repeating: 0, count: 40)
+    @Published var memHist: [Double] = Array(repeating: 0, count: 40)
     @Published var mem = 0.0
     @Published var rssi = 0
     var last: UInt64 = 0, lastT = Date(), prev: host_cpu_load_info?, timer: Timer?
@@ -431,10 +435,15 @@ final class Sys: ObservableObject {
         if last > 0, b >= last { down = Array(down.dropFirst()) + [Double(b - last) / dt] }
         last = b; lastT = now
         cpu = cpuLoad(); mem = memUsed(); rssi = CWWiFiClient.shared().interface()?.rssiValue() ?? 0
+        gpu = gpuLoad()
+        gpuHist = Array(gpuHist.dropFirst()) + [gpu]
+        cpuHist = Array(cpuHist.dropFirst()) + [cpu]
+        memHist = Array(memHist.dropFirst()) + [min(mem, 1)]
     }
 }
 struct Spark: View {
     var v: [Double]
+    var color: Color = .cyan
     var body: some View {
         GeometryReader { g in
             let m = max(v.max() ?? 1, 1)
@@ -443,7 +452,7 @@ struct Spark: View {
                     let pt = CGPoint(x: g.size.width * CGFloat(i) / CGFloat(max(v.count - 1, 1)), y: g.size.height * (1 - CGFloat(x / m)))
                     if i == 0 { p.move(to: pt) } else { p.addLine(to: pt) }
                 }
-            }.stroke(Color.cyan, lineWidth: 2)
+            }.stroke(color, lineWidth: 2)
         }
     }
 }
@@ -456,9 +465,13 @@ struct SysView: View {
                 Spark(v: y.down).frame(maxHeight: .infinity)
                 HStack { Image(systemName: "wifi"); Text(y.rssi == 0 ? "No Wi-Fi" : "\(y.rssi) dBm").font(.caption) }
             }
-            VStack(alignment: .leading, spacing: 8) {
-                Text(String(format: "CPU %.0f%%", y.cpu * 100)).font(.caption); ProgressView(value: y.cpu)
-                Text(String(format: "Memory %.0f%%", y.mem * 100)).font(.caption); ProgressView(value: min(y.mem, 1))
+            VStack(alignment: .leading, spacing: 4) {
+                Text(String(format: "CPU %.0f%%", y.cpu * 100)).font(.caption)
+                Spark(v: y.cpuHist, color: .orange).frame(height: 30)
+                Text(String(format: "Memory %.0f%%", y.mem * 100)).font(.caption)
+                Spark(v: y.memHist, color: .green).frame(height: 30)
+                Text(String(format: "GPU %.0f%%", y.gpu * 100)).font(.caption)
+                Spark(v: y.gpuHist, color: .purple).frame(height: 30)
             }.frame(width: 200)
         }.onAppear { y.start() }.onDisappear { y.stop() }
     }
@@ -620,9 +633,13 @@ struct SettingsView: View {
     @AppStorage("hudVolume") var hudVolume = true
     @AppStorage("hudBrightness") var hudBrightness = false
     @AppStorage("lyrics") var lyrics = true
+    @AppStorage("notchScreen") var notchScreen = "auto"
+    @AppStorage("idleImage") var idleImage = false
+    @AppStorage("idleImagePath") var idlePath = ""
     @AppStorage("artColors") var artColors = false
     @AppStorage("hudPower") var hudPower = true
     @AppStorage("hudBluetooth") var hudBluetooth = true
+    @AppStorage("replaceVolume") var replaceVolume = false
     @AppStorage("updAutoInstall") var autoInstall = false
     @ObservedObject var hk = Hotkeys.shared
     @ObservedObject var rec = HotkeyRecorder.shared
@@ -700,7 +717,9 @@ struct SettingsView: View {
                         Toggle("Battery and charging", isOn: $hudPower)
                         Toggle("Bluetooth", isOn: $hudBluetooth)
                     }.toggleStyle(.switch).controlSize(.small).font(.system(size: 11))
-                    Text("Pops up beside the notch for a moment. macOS still shows its own volume and brightness bars too.").font(.caption).foregroundColor(.gray)
+                    Toggle("Replace the macOS volume bar with this one (needs Accessibility)", isOn: $replaceVolume)
+                        .toggleStyle(.switch).controlSize(.small).font(.system(size: 11))
+                    Text("Pops up beside the notch for a moment. Unless you switch the line above on, macOS still shows its own volume and brightness bars too.").font(.caption).foregroundColor(.gray)
                 }
                 section("Music") {
                     HStack(spacing: 14) {
@@ -732,6 +751,19 @@ struct SettingsView: View {
                         Toggle("Fluid motion", isOn: $fluid)
                         Toggle("Haptics", isOn: $haptics)
                     }.toggleStyle(.switch).controlSize(.small).font(.system(size: 11))
+                    HStack(spacing: 10) {
+                        Text("Picture").frame(width: 70, alignment: .leading)
+                        Toggle("Show beside the notch", isOn: $idleImage).toggleStyle(.switch).controlSize(.small)
+                        pill("Choose picture or GIF...") { IdlePicture.choose() }
+                        if !idlePath.isEmpty { pill("Remove") { IdlePicture.remove() } }
+                    }.font(.system(size: 11))
+                    HStack {
+                        Text("Display").frame(width: 70, alignment: .leading)
+                        Picker("", selection: $notchScreen) {
+                            Text("Automatic (the notch, else main)").tag("auto")
+                            ForEach(NSScreen.screens, id: \.localizedName) { sc in Text(sc.localizedName).tag(sc.localizedName) }
+                        }.labelsHidden().frame(width: 280)
+                    }
                     HStack { Text("Corners").frame(width: 70, alignment: .leading); Slider(value: $corner, in: 6...40).frame(width: 320) }
                     HStack { Text("Pill width").frame(width: 70, alignment: .leading); Slider(value: $pillExtra, in: 40...170).frame(width: 320); Text("\(Int(pillExtra))").font(.caption).foregroundColor(.gray) }
                 }
@@ -846,7 +878,7 @@ extension Store {
     var hasLive: Bool { LivePillModel.shared.show }
 }
 
-enum LeftEar: Equatable { case none, mic, dl, music, timer, sf(String, String) }
+enum LeftEar: Equatable { case none, mic, dl, music, timer, sf(String, String), img }
 enum RightEar: Equatable { case none, bars, mono(String), text(String), level(Double, String) }
 
 final class LivePillModel: ObservableObject {
@@ -875,6 +907,8 @@ final class LivePillModel: ObservableObject {
         // A volume / brightness / battery / Bluetooth alert takes over the pill for a moment.
         let hud = AlertCenter.shared.current()
         if let h = hud { (l, r) = h.ears; l2 = .none }
+        // With a picture chosen in Settings, the pill stays up beside the notch showing it while nothing else is going on.
+        if l == .none && r == .none && IdlePicture.enabled { l = .img }
         let active = l != .none || r != .none
         if active {
             until = Date().addingTimeInterval(hud == nil ? 4 : 0.4)
@@ -907,6 +941,8 @@ extension RootView {
 
     @ViewBuilder func ear(_ e: LeftEar) -> some View {
         switch e {
+        case .img:
+            IdleImage(path: IdlePicture.path).frame(width: 22, height: 22).clipShape(RoundedRectangle(cornerRadius: 5, style: .continuous))
         case .sf(let name, let c):
             Image(systemName: name).font(.system(size: 14, weight: .semibold)).foregroundColor(presetColor(c))
         case .mic:

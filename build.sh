@@ -10,8 +10,8 @@ VERSION="${NOTCH_VERSION:-$(tr -d '[:space:]' < VERSION 2>/dev/null || true)}"
 rm -rf "$APP" .arm .x86
 mkdir -p "$APP/Contents/MacOS" "$APP/Contents/Resources"
 
-swiftc -O -target arm64-apple-macos13.0  main.swift Extras.swift Updater.swift ControlCentre.swift AI.swift Apps.swift Features.swift Weather.swift Notes.swift Days.swift ClipImages.swift Hotkeys.swift Glass.swift Alerts.swift Lyrics.swift FileTools.swift -o .arm
-swiftc -O -target x86_64-apple-macos13.0 main.swift Extras.swift Updater.swift ControlCentre.swift AI.swift Apps.swift Features.swift Weather.swift Notes.swift Days.swift ClipImages.swift Hotkeys.swift Glass.swift Alerts.swift Lyrics.swift FileTools.swift -o .x86
+swiftc -O -target arm64-apple-macos13.0  main.swift Extras.swift Updater.swift ControlCentre.swift AI.swift Apps.swift Features.swift Weather.swift Notes.swift Days.swift ClipImages.swift Hotkeys.swift Glass.swift Alerts.swift Lyrics.swift FileTools.swift QuickTabs.swift Stage4b.swift -o .arm
+swiftc -O -target x86_64-apple-macos13.0 main.swift Extras.swift Updater.swift ControlCentre.swift AI.swift Apps.swift Features.swift Weather.swift Notes.swift Days.swift ClipImages.swift Hotkeys.swift Glass.swift Alerts.swift Lyrics.swift FileTools.swift QuickTabs.swift Stage4b.swift -o .x86
 lipo -create .arm .x86 -output "$APP/Contents/MacOS/NOTCH"
 rm -f .arm .x86
 
@@ -42,6 +42,8 @@ cat > "$APP/Contents/Info.plist" <<'EOF'
 <key>NSDownloadsFolderUsageDescription</key><string>Show download progress in the notch.</string>
 <key>NSBluetoothAlwaysUsageDescription</key><string>Connect and disconnect your Bluetooth devices from the notch.</string>
 <key>NSCameraUsageDescription</key><string>Camera mirror and photos in the notch.</string>
+<key>NSMicrophoneUsageDescription</key><string>Dictation listens to your microphone only while you have it switched on.</string>
+<key>NSSpeechRecognitionUsageDescription</key><string>Dictation turns what you say into text in the notch.</string>
 <key>NSAppTransportSecurity</key><dict><key>NSAllowsLocalNetworking</key><true/></dict>
 <key>NSCalendarsUsageDescription</key><string>Show your events in the notch.</string>
 <key>NSCalendarsFullAccessUsageDescription</key><string>Show your events in the notch.</string>

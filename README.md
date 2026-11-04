@@ -108,6 +108,10 @@ In Safari: **Settings > Advanced**, tick "Show features for web developers", the
 
 ## Recent changes
 
+- **4.2.0**: optional volume-key takeover, plus everything in 4.1.
+- **4.1.1**: glass search bars, plus everything in 4.1.0.
+- **4.1.0**: Dictate tab, GPU graph, idle picture or GIF beside the notch.
+- **4.0.0**: Quick Actions, To-do with focus stats, Terminal, Teleprompter, display picker, CPU and memory graphs.
 - **3.9.0**: shelf tools (zip, unzip, convert, share, text from images and screen, remove background).
 - **3.8.0**: big smoothness and lag fix, live synced lyrics, colours that follow album art.
 - **3.7.0**: Liquid Glass UI, fluid spring motion, themes, notch outline, alerts in the pill (volume, brightness, battery, Bluetooth), two live activities at once.

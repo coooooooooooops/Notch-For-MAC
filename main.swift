@@ -118,6 +118,7 @@ final class Store: ObservableObject {
         }
         if running {
             if remaining > 0 { remaining -= 1 } else {
+                if !onBreak { PomoStats.record(focusMins) }      // a focus session just finished
                 onBreak.toggle(); remaining = (onBreak ? breakMins : focusMins) * 60
                 NSSound(named: NSSound.Name("Glass"))?.play()
                 onTimerDone?()
@@ -420,6 +421,11 @@ struct RootView: View {
                         case 9: SysView()
                         case 10: ControlCentreView()
                         case aiTab: AIView()
+                        case quickTab: QuickActionsView()
+                        case dictateTab: DictateView()
+                        case todoTab: TodoView()
+                        case termTab: TerminalView()
+                        case prompterTab: PrompterView()
                         case 11: SettingsView()
                         case weatherTab: WeatherView()
                         case updaterTab: UpdaterView()
@@ -547,7 +553,7 @@ struct RootView: View {
                 }.buttonStyle(.plain).disabled(s.clips.isEmpty && clipImgs.items.isEmpty).opacity(s.clips.isEmpty && clipImgs.items.isEmpty ? 0.4 : 1)
             }
             .padding(.horizontal, 10).padding(.vertical, 5)
-            .background(Color.white.opacity(0.08)).clipShape(RoundedRectangle(cornerRadius: 9))
+            .panelCard(9, classic: Color.white.opacity(0.08))
             if !clipImgs.items.isEmpty && clipQuery.isEmpty { ClipImageStrip() }
             ScrollView {
                 VStack(alignment: .leading, spacing: 4) {
@@ -708,7 +714,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     }
 
     func geometry(_ expanded: Bool) -> NSRect {
-        let scr = NSScreen.screens.first { $0.safeAreaInsets.top > 0 } ?? NSScreen.main ?? NSScreen.screens[0]
+        let pick = UserDefaults.standard.string(forKey: "notchScreen") ?? "auto"
+        let chosen = pick == "auto" ? nil : NSScreen.screens.first { $0.localizedName == pick }
+        let scr = chosen ?? NSScreen.screens.first { $0.safeAreaInsets.top > 0 } ?? NSScreen.main ?? NSScreen.screens[0]
         var nw: CGFloat = 200, nh: CGFloat = 32
         if scr.safeAreaInsets.top > 0, let l = scr.auxiliaryTopLeftArea, let r = scr.auxiliaryTopRightArea {
             nw = r.minX - l.maxX; nh = scr.safeAreaInsets.top
@@ -724,6 +732,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         case 2: eh = ClipImages.shared.items.isEmpty ? 250 : 296   // clipboard (search + pinned, plus the image strip)
         case 11: eh = 310           // settings (scrolls)
         case weatherTab: eh = 290   // weather
+        case quickTab: eh = 250     // shortcuts + quick actions
+        case dictateTab: eh = 250   // dictation
+        case todoTab: eh = 290      // to-do + focus stats
+        case termTab: ew = 820; eh = 330
+        case prompterTab: ew = 820; eh = 340
         case updaterTab: eh = 300   // updates list
         default: break
         }

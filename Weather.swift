@@ -313,7 +313,7 @@ struct WeatherView: View {
                 if m.searchBusy { ProgressView().controlSize(.small) }
             }
             .padding(.horizontal, 10).padding(.vertical, 6)
-            .background(Color.white.opacity(0.1)).clipShape(RoundedRectangle(cornerRadius: 9))
+            .panelCard(9, classic: Color.white.opacity(0.1))
 
             ScrollView {
                 VStack(spacing: 4) {

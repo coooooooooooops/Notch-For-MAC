@@ -6,14 +6,14 @@ import UniformTypeIdentifiers
 
 // MARK: - Tabs: hide and reorder
 
-let tabIcons = ["music.note", "tray.and.arrow.down", "doc.on.clipboard", "timer", "note.text", "square.grid.2x2", "globe", "camera", "calendar", "gauge.medium", "switch.2", "gearshape.fill", "ellipsis", "arrow.down.circle", "sparkles", "cloud.sun.fill"]
+let tabIcons = ["music.note", "tray.and.arrow.down", "doc.on.clipboard", "timer", "note.text", "square.grid.2x2", "globe", "camera", "calendar", "gauge.medium", "switch.2", "gearshape.fill", "ellipsis", "arrow.down.circle", "sparkles", "cloud.sun.fill", "bolt.circle.fill", "checklist", "terminal", "text.alignleft", "waveform"]
 // Slot numbers are kept stable so saved tab order and visibility carry over between versions.
 let tabNames: [Int: String] = [0: "Music", 1: "Shelf", 2: "Clipboard", 3: "Timers", 4: "Notes", 5: "Apps", 6: "Browser", 7: "Camera", 8: "Calendar",
-                               9: "System", 10: "Control Centre", 11: "Settings", 13: "Updates", 14: "AI", 15: "Weather"]
+                               9: "System", 10: "Control Centre", 11: "Settings", 13: "Updates", 14: "AI", 15: "Weather", 16: "Quick Actions", 17: "To-do", 18: "Terminal", 19: "Teleprompter", 20: "Dictate"]
 
 final class TabPrefs: ObservableObject {
     static let shared = TabPrefs()
-    static let defaultOrder = [0, 1, 2, 3, 4, 5, aiTab, 6, 7, 8, weatherTab, 9, 10, 11, updaterTab]
+    static let defaultOrder = [0, 1, 2, 3, 4, 5, aiTab, 6, 7, 8, weatherTab, quickTab, dictateTab, todoTab, termTab, prompterTab, 9, 10, 11, updaterTab]
 
     @Published var order: [Int]
     @Published var hidden: Set<Int>
@@ -30,6 +30,12 @@ final class TabPrefs: ObservableObject {
         }
         order = o
         hidden = Set((d.array(forKey: "tabHidden") as? [Int]) ?? [])
+        // The Terminal and Teleprompter tabs start switched off; turn them on in Customise tabs.
+        if !d.bool(forKey: "tabsV4Seeded") {
+            hidden.insert(termTab); hidden.insert(prompterTab)
+            d.set(true, forKey: "tabsV4Seeded")
+            d.set(Array(hidden), forKey: "tabHidden")
+        }
     }
 
     func save() {
