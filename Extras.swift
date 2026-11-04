@@ -646,7 +646,7 @@ struct SettingsView: View {
     @AppStorage("fluid") var fluid = true
     @AppStorage("haptics") var haptics = true
     @AppStorage("hudVolume") var hudVolume = true
-    @AppStorage("hudBrightness") var hudBrightness = false
+    @AppStorage("hudBrightness") var hudBrightness = true
     @AppStorage("lyrics") var lyrics = true
     @AppStorage("notchScreen") var notchScreen = "auto"
     @AppStorage("idleImage") var idleImage = false
@@ -654,8 +654,8 @@ struct SettingsView: View {
     @AppStorage("artColors") var artColors = false
     @AppStorage("hudPower") var hudPower = true
     @AppStorage("hudBluetooth") var hudBluetooth = true
-    @AppStorage("replaceVolume") var replaceVolume = false
-    @AppStorage("replaceBrightness") var replaceBrightness = false
+    @AppStorage("replaceVolume") var replaceVolume = true
+    @AppStorage("replaceBrightness") var replaceBrightness = true
     @AppStorage("outlineTop") var outlineTop = true
     @ObservedObject var bass = BassBoost.shared
     @AppStorage("updAutoInstall") var autoInstall = false

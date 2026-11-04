@@ -433,11 +433,11 @@ struct RootView: View {
     /// Both use the notch's own arcs, so the thickness is even all the way round.
     @ViewBuilder func outlineShape(_ rad: CGFloat, _ lw: CGFloat) -> some View {
         if outlineTop {
-            NotchShape(r: rad, inset: lw / 2)
+            NotchShape(r: rad + lw / 2, inset: -lw / 2)
                 .stroke(outlineColor, style: StrokeStyle(lineWidth: lw, lineJoin: .miter))
                 .allowsHitTesting(false)
         } else {
-            NotchOutline(r: rad, inset: lw / 2)
+            NotchOutline(r: rad + lw / 2, inset: -lw / 2)
                 .stroke(outlineColor, style: StrokeStyle(lineWidth: lw, lineCap: .butt, lineJoin: .round))
                 .allowsHitTesting(false)
         }
@@ -845,6 +845,7 @@ final class NotchPanel: NSPanel {
 }
 
 final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
+    static let notchLevel = NSWindow.Level(rawValue: Int(CGShieldingWindowLevel()) - 1)   // above full-screen apps and every window
     var panel: NotchPanel!
     var item: NSStatusItem!
     let s = Store.shared
@@ -853,9 +854,24 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     var shrinkSince: Date?
     var unmountWork: DispatchWorkItem?
 
+    var padUntil = Date.distantPast
+    /// Transparent breathing room round the shape while it is open or still settling, so a spring overshoot is never cut off.
+    func pad() -> CGFloat { (s.expanded || Date() < padUntil) ? 36 : basePad() }
+    /// Even when closed the window is a few points bigger than the shape, so the outline can sit just outside it and hug it.
+    func basePad() -> CGFloat {
+        let d = UserDefaults.standard
+        if (d.string(forKey: "outline") ?? "white") == "none" { return 0 }
+        return CGFloat((d.object(forKey: "outlineWidth") as? Double) ?? 1.5) + 3
+    }
+    func windowRect(_ t: NSRect) -> NSRect {
+        let p = pad()
+        return NSRect(x: t.minX - p, y: t.minY - p, width: t.width + 2 * p, height: t.height + p)
+    }
+
     /// The window only ever jumps (never animates, which was the lag). It grows straight away so the shape has room
     /// to open, and shrinks a moment after the shape has finished closing. The visible animation is all in SwiftUI.
-    func syncFrame(_ target: NSRect) {
+    func syncFrame(_ rawTarget: NSRect) {
+        let target = windowRect(rawTarget)
         let f = panel.frame
         let w = max(f.width, target.width), h = max(f.height, target.height)
         if abs(w - f.width) > 1 || abs(h - f.height) > 1 || abs(f.midX - target.midX) > 1 || abs(f.maxY - target.maxY) > 1 {
@@ -863,7 +879,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         }
         if abs(w - target.width) > 1 || abs(h - target.height) > 1 {
             if let t = shrinkSince {
-                if Date().timeIntervalSince(t) > 0.55 { panel.setFrame(target, display: true); shrinkSince = nil }
+                if Date().timeIntervalSince(t) > 0.8 { panel.setFrame(target, display: true); shrinkSince = nil }
             } else { shrinkSince = Date() }
         } else { shrinkSince = nil }
     }
@@ -904,10 +920,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
 
     func applicationDidFinishLaunching(_ n: Notification) {
         NSApp.setActivationPolicy(.accessory)
-        panel = NotchPanel(contentRect: geometry(false), styleMask: [.borderless, .nonactivatingPanel], backing: .buffered, defer: false)
-        panel.level = NSWindow.Level(rawValue: NSWindow.Level.mainMenu.rawValue + 3)
+        panel = NotchPanel(contentRect: windowRect(geometry(false)), styleMask: [.borderless, .nonactivatingPanel], backing: .buffered, defer: false)
+        panel.level = AppDelegate.notchLevel
         panel.backgroundColor = .clear; panel.isOpaque = false; panel.hasShadow = false
-        panel.hidesOnDeactivate = false; panel.isMovable = false
+        panel.hidesOnDeactivate = false; panel.isMovable = false; panel.worksWhenModal = true
         // Stay put on every desktop, over full-screen apps, and whichever app or window is in front.
         panel.collectionBehavior = [.canJoinAllSpaces, .fullScreenAuxiliary, .stationary, .ignoresCycle, .canJoinAllApplications]
         panel.isFloatingPanel = true
@@ -920,13 +936,18 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         // keep the notch (and its live pill) in place when you swipe between desktops, wake the Mac or change displays
         let wsc = NSWorkspace.shared.notificationCenter
         wsc.addObserver(forName: NSWorkspace.activeSpaceDidChangeNotification, object: nil, queue: .main) { [weak self] _ in self?.reassert() }
+        wsc.addObserver(forName: NSWorkspace.didActivateApplicationNotification, object: nil, queue: .main) { [weak self] _ in self?.reassert() }
         wsc.addObserver(forName: NSWorkspace.didWakeNotification, object: nil, queue: .main) { [weak self] _ in self?.reassert() }
         wsc.addObserver(forName: NSWorkspace.screensDidWakeNotification, object: nil, queue: .main) { [weak self] _ in self?.reassert() }
         // switching to another app or window must never knock the notch off the screen
         wsc.addObserver(forName: NSWorkspace.didActivateApplicationNotification, object: nil, queue: .main) { [weak self] _ in self?.keepOnTop() }
         wsc.addObserver(forName: NSWorkspace.didLaunchApplicationNotification, object: nil, queue: .main) { [weak self] _ in self?.keepOnTop() }
         NotificationCenter.default.addObserver(forName: NSApplication.didChangeScreenParametersNotification, object: nil, queue: .main) { [weak self] _ in self?.reassert() }
-        Timer.scheduledTimer(withTimeInterval: 0.08, repeats: true) { [weak self] _ in self?.check() }
+        // always on screen, on every desktop and over full-screen apps, live from the moment you arrive (no waiting for focus)
+        NotificationCenter.default.addObserver(forName: NSWindow.didChangeOcclusionStateNotification, object: panel, queue: .main) { [weak self] _ in self?.keepOnTop() }
+        NotificationCenter.default.addObserver(forName: NSApplication.didResignActiveNotification, object: nil, queue: .main) { [weak self] _ in self?.keepOnTop() }
+        let tick = Timer(timeInterval: 0.08, repeats: true) { [weak self] _ in self?.check() }
+        RunLoop.main.add(tick, forMode: .common)   // keeps running while menus are open or the Mac is switching desktops
         Timer.scheduledTimer(withTimeInterval: 60, repeats: true) { _ in IdleSweeper.run() }
         s.onTimerDone = { [weak self] in self?.wobble() }
 
@@ -936,7 +957,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         // clicking anywhere else puts a hotkey-opened notch away again
         NSEvent.addGlobalMonitorForEvents(matching: [.leftMouseDown, .rightMouseDown]) { [weak self] _ in
             guard let self = self, self.s.forceOpen else { return }
-            if !self.panel.frame.insetBy(dx: -12, dy: -12).contains(NSEvent.mouseLocation) { self.s.forceOpen = false }
+            if !self.geometry(true).insetBy(dx: -12, dy: -12).contains(NSEvent.mouseLocation) { self.s.forceOpen = false }
         }
 
         // A minimal Edit menu: without one, Cut / Copy / Paste do nothing in pop-up text boxes.
@@ -986,7 +1007,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
             let e = Date().timeIntervalSince(start)
             if e >= dur {
                 tm.invalidate(); self.wobbling = false; self.s.wob = false
-                self.panel.setFrame(self.geometry(self.s.expanded), display: true)
+                self.panel.setFrame(self.windowRect(self.geometry(self.s.expanded)), display: true)
                 return
             }
             let decay = CGFloat(exp(-2.4 * e)), ph = CGFloat(2 * Double.pi * freq * e)
@@ -1036,7 +1057,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     func check() {
         LivePillModel.shared.refresh(s, liveModel)
         tickN += 1
-        if tickN % 12 == 0, !panel.isVisible || !panel.occlusionState.contains(.visible) { keepOnTop() }
+        if tickN % 6 == 0, !panel.isVisible || !panel.isOnActiveSpace || !panel.occlusionState.contains(.visible) { keepOnTop() }
         if wobbling { return }
         let ge = geometry(true), gc = geometry(false)
         if s.tw != ge.width { s.tw = ge.width }
@@ -1063,6 +1084,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
                     self.s.showContent = true
                 }
             } else {
+                padUntil = Date().addingTimeInterval(1.2)
                 s.showContent = false
                 DictationModel.shared.stop()        // the mic never stays on after the notch is put away
                 browserModel.reset()                // search browser starts fresh next time
@@ -1079,8 +1101,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
 
     /// Makes sure the notch is still on screen and in front (it is, unless macOS moved it). Cheap, safe to call often.
     func keepOnTop() {
-        let lvl = NSWindow.Level(rawValue: NSWindow.Level.mainMenu.rawValue + 3)
-        if panel.level != lvl { panel.level = lvl }
+        if panel.level != AppDelegate.notchLevel { panel.level = AppDelegate.notchLevel }
         panel.orderFrontRegardless()
     }
 
@@ -1091,11 +1112,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
 
     /// Puts the panel back at the notch and on top. Run right away and again once a desktop swipe has settled.
     func reassert() {
-        panel.setFrame(geometry(s.expanded), display: true)
+        panel.setFrame(windowRect(geometry(s.expanded)), display: true)
         panel.orderFrontRegardless()
         DispatchQueue.main.asyncAfter(deadline: .now() + 0.6) { [weak self] in
             guard let self = self else { return }
-            self.panel.setFrame(self.geometry(self.s.expanded), display: true)
+            self.panel.setFrame(self.windowRect(self.geometry(self.s.expanded)), display: true)
             self.panel.orderFrontRegardless()
         }
     }

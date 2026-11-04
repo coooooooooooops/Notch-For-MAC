@@ -64,7 +64,10 @@ EOF
 sed -i '' "s/__VERSION__/$VERSION/g" "$APP/Contents/Info.plist"
 
 xattr -cr "$APP" || true
-codesign --force --deep --sign - "$APP"
+# Stable signature: macOS ties Accessibility (volume / brightness keys, window snapping) to the app's signature.
+# A plain ad-hoc signature changes on every rebuild, which silently drops the permission. Pinning the requirement to the
+# bundle id keeps the permission across rebuilds and updates (grant it once more after installing this version).
+codesign --force --deep --sign - -r='designated => identifier "com.coops.notch"' "$APP"
 rm -rf dmg NOTCH.dmg && mkdir dmg && cp -R "$APP" dmg/ && ln -s /Applications dmg/Applications
 hdiutil create -volname NOTCH -srcfolder dmg -ov -format UDZO NOTCH.dmg >/dev/null && rm -rf dmg
 echo "Made NOTCH.dmg (drag-to-install)."

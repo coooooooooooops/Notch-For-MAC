@@ -200,7 +200,7 @@ final class AlertCenter {
 
     func start() {
         let d = UserDefaults.standard
-        d.register(defaults: ["hudVolume": true, "hudBrightness": false, "hudPower": true, "hudBluetooth": true])
+        d.register(defaults: ["hudVolume": true, "hudBrightness": true, "replaceVolume": true, "replaceBrightness": true, "hudPower": true, "hudBluetooth": true])
         timer = Timer.scheduledTimer(withTimeInterval: 0.35, repeats: true) { [weak self] _ in self?.poll() }
     }
 
